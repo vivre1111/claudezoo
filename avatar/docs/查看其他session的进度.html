@@ -1,0 +1,668 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>查看本机其他 Claude Code session 的进度 · 讲解</title>
+<style>
+:root{
+  --bg:#fbfbfd; --fg:#1a1d23; --dim:#5b6472; --line:#e2e5ea; --card:#fff;
+  --accent:#2d5da8; --warn:#b45309; --bad:#b91c1c; --good:#15803d;
+  --code-bg:#f3f4f7;
+}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#14161c;--fg:#e6e8ec;--dim:#98a1b0;--line:#2b2f3a;--card:#191c23;
+        --accent:#7aa5e8;--warn:#e0a44c;--bad:#f08a8a;--good:#6ed08a;
+        --code-bg:#1e222b}
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font:16px/1.75 "Microsoft YaHei","PingFang SC",system-ui,sans-serif}
+.wrap{max-width:900px;margin:0 auto;padding:32px 22px 90px}
+h1{font-size:30px;margin:0 0 6px;letter-spacing:-.5px}
+h2{font-size:23px;margin:52px 0 6px;padding-top:22px;border-top:2px solid var(--line)}
+h3{font-size:18px;margin:30px 0 6px;color:var(--accent)}
+h4{font-size:15.5px;margin:20px 0 4px}
+p{margin:10px 0}
+.lede{color:var(--dim);font-size:15px;margin-bottom:8px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+  padding:16px 18px;margin:16px 0}
+.why{border-left:4px solid var(--accent)}
+.fail{border-left:4px solid var(--bad)}
+.note{border-left:4px solid var(--warn)}
+code{background:var(--code-bg);padding:1px 5px;border-radius:4px;
+  font:13.5px/1.5 Consolas,Menlo,monospace}
+pre{background:var(--code-bg);padding:12px 14px;border-radius:8px;overflow-x:auto;
+  font:13px/1.6 Consolas,Menlo,monospace}
+table{border-collapse:collapse;width:100%;margin:14px 0;font-size:14.5px}
+th,td{border:1px solid var(--line);padding:7px 10px;text-align:left}
+th{background:var(--code-bg);font-weight:600}
+figure{margin:20px 0;text-align:center}
+figcaption{color:var(--dim);font-size:13.5px;margin-top:8px;text-align:left}
+svg{display:block;width:100%;max-width:100%;height:auto;background:var(--card);border:1px solid var(--line);
+  border-radius:8px}
+.toc{background:var(--card);border:1px solid var(--line);border-radius:10px;
+  padding:14px 20px;margin:22px 0}
+.toc ol{margin:6px 0;padding-left:22px}
+.toc a{color:var(--accent);text-decoration:none}
+.toc a:hover{text-decoration:underline}
+.tag{display:inline-block;font-size:11.5px;padding:1px 7px;border-radius:9px;
+  background:var(--code-bg);color:var(--dim);margin-left:6px;vertical-align:2px}
+.tag.ok{color:var(--good)} .tag.no{color:var(--bad)}
+em.k{font-style:normal;font-weight:600;color:var(--accent)}
+.dim{color:var(--dim)}
+</style></head><body><div class="wrap">
+
+<h1>查看本机其他 Claude Code session 的进度</h1>
+<p class="lede">这份文档的读者是<b>另一个 Claude Code session</b>——尤其是从同一个会话 fork 出来、
+正在并行推进同一个项目的兄弟 session。你需要知道：对方现在做到哪一步了？它是在等人类、
+在跑工具，还是卡住了？它的待办清单还剩什么？
+全文所有结构、字段和数字都来自 2026-08-22 对本机 <code>~/.claude</code> 的实际扫描，
+以及 <code>D:\avatar\zoo_server.py</code>（1083 行，已在本机长期运行验证）里跑通的读法。</p>
+
+<div class="card note" style="border-left-color:var(--bad)">
+<b>先说红线：全程只读。</b>
+本文所有做法都只读取文件、只做只读的进程查询。<b>不要</b>写入 <code>~/.claude</code> 下的任何文件——
+那是别人正在追加写的活文件；<b>不要</b>试图用信号或 API 去干预别的 session 的进程；<b>不要</b>把
+读到的内容发到任何外部服务。你是在旁观，不是在操控。
+Windows 上尤其注意：<code>os.kill(pid, 0)</code> 在 POSIX 上是无害探活，在 Windows 上
+Python 会把它翻译成 <code>TerminateProcess</code>，<b>真的会把那个 session 杀掉</b>。
+</div>
+
+<div class="toc"><b>目录</b>
+<ol>
+<li><a href="#s1">三条路：读文件、直接喊话、看工作区</a></li>
+<li><a href="#s2">数据在哪儿：<code>~/.claude</code> 的四个仓</a></li>
+<li><a href="#s3">找到"兄弟"：为什么不能靠 sessionId</a></li>
+<li><a href="#s4">判断"它现在干到哪一步"</a></li>
+<li><a href="#s5">现成探针：peek.py</a></li>
+<li><a href="#s6">六个会骗你的地方</a></li>
+</ol></div>
+
+
+<h2 id="s1">1. 三条路：读文件、直接喊话、看工作区</h2>
+
+<h3>1.1 要解决什么</h3>
+<p>两个 fork 出来的 session 各自在推进同一个项目的不同分支（比如一个搭原型、一个写实现），
+但它们互相看不见。人类在两个窗口之间来回切换，很容易出现：A 已经改了数据库 schema，
+B 还在按旧 schema 写代码；或者两边同时在做同一件事。
+你需要一个办法，在<b>不打扰对方、不等人类转述</b>的前提下知道对方的状态。</p>
+
+<h3>1.2 怎么做</h3>
+<p>有三条完全不同的路，代价和实时性都不一样，按需要挑：</p>
+
+<table>
+<tr><th>路子</th><th>看到什么</th><th>代价</th><th>什么时候用</th></tr>
+<tr><td><b>A. 读 <code>~/.claude</code> 文件</b></td><td>对方的完整转录、待办、状态</td>
+    <td>只读几个文件，毫秒级，对方无感</td><td>默认选它。想知道"它到底做了什么"</td></tr>
+<tr><td><b>B. 直接喊话</b><br><code>ListAgents</code> / <code>SendMessage</code></td>
+    <td>对方主动回答你的问题</td><td>会打断对方、消耗它的 token</td><td>需要对方<b>决策</b>或<b>确认</b>时</td></tr>
+<tr><td><b>C. 看共享工作区</b><br><code>git log</code> / <code>docs/</code></td>
+    <td>对方已经落地的产出</td><td>几乎为零</td><td>只关心"结果有没有出来"</td></tr>
+</table>
+
+<p><em class="k">路 A</em> 是本文的主线，第 2–5 节都在讲它。
+<em class="k">路 B</em> 值得单独说一句：<code>ListAgents</code> 在本机实测可用，返回的是同机的对等 session：</p>
+
+<pre><code>Peer sessions (4):
+  claude-1a [67760d]  ·  interactive  ·  started 1h ago
+  vivre-c2 [e5adce]  ·  interactive  ·  started 0s ago
+  claude-f3 [36de93]  ·  interactive  ·  started 6m ago
+  claude-fc [164e36]  ·  interactive  ·  started 1h ago</code></pre>
+
+<p>那个 <code>claude-1a</code> 就是注册表文件里的 <code>name</code> 字段，也是 <code>SendMessage</code>
+的收件地址。底层传输是注册表里的 <code>messagingSocketPath</code>，在 Windows 上是一条命名管道，
+形如 <code>\\.\pipe\cc-msg-403563cb5dbf0a5fbdc8263623ecb84d</code>。</p>
+
+<div class="card why"><b>为什么默认选"读文件"而不是"直接问"</b>：
+喊话看着更直接，但它有三个隐性代价。
+其一，<b>会打断对方</b>——消息会进到对方的输入队列，它得停下手里的活来读、来回；
+如果两个 session 互相喊，很容易变成两边都在回消息、都没在干活。
+其二，<b>你拿到的是转述，不是事实</b>——对方会用自己的话总结进度，
+而转录文件里是它<b>实际调用了什么工具、改了哪个文件</b>，后者才是可对账的。
+其三，<b>不是所有 session 都能喊</b>：本机 48 条注册表条目里只有 11 条带
+<code>messagingSocketPath</code>，因为这是较新版本才有的能力（实测 2.1.235 / 2.1.237 全部有，
+2.1.229 及更早全部没有，2.1.234 处在过渡期——9 条里只有 1 条有）。老版本的 session 你喊不动，
+但它的文件照样读得到。
+<br><br>所以顺序应该是：<b>先读文件把事实搞清楚，确实需要对方做决定时才喊话。</b></div>
+
+<div class="card note"><b>它骗你的地方</b>：<code>ListAgents</code> 只列出<b>还活着</b>的对等 session。
+一个刚被关掉的 fork，喊不到，但它的转录文件完整保留在磁盘上——
+"喊不到"绝不等于"没这个 session"，更不等于"它没干过活"。
+反过来，路 C（看 git）只能看到<b>已提交</b>的东西，对方改了但没提交的工作区内容你看不见。
+</div>
+
+
+<h2 id="s2">2. 数据在哪儿：<code>~/.claude</code> 的四个仓</h2>
+
+<h3>2.1 要解决什么</h3>
+<p>"session 的状态"不是存在一个地方的。它被拆在四个目录里，各存一部分，
+而且<b>关联它们的键不止一个</b>。不知道这个布局，就只能靠猜文件名。</p>
+
+<h3>2.2 怎么做</h3>
+
+<figure><svg width="700" height="330" viewBox="0 0 700 330" xmlns="http://www.w3.org/2000/svg">
+<rect x="18" y="20" width="200" height="86" rx="8" fill="none" stroke="var(--accent)" stroke-width="2.5"/>
+<text x="118" y="44" fill="var(--fg)" font-size="13.5" text-anchor="middle" font-weight="600">sessions/&lt;pid&gt;.json</text>
+<text x="118" y="64" fill="var(--dim)" font-size="12" text-anchor="middle">注册表 · 按 pid 命名</text>
+<text x="118" y="82" fill="var(--dim)" font-size="12" text-anchor="middle">pid · sessionId · cwd</text>
+<text x="118" y="98" fill="var(--dim)" font-size="12" text-anchor="middle">name · version · 管道</text>
+
+<line x1="218" y1="63" x2="300" y2="63" stroke="var(--good)" stroke-width="2"/>
+<polygon points="300,63 292,59 292,67" fill="var(--good)"/>
+<text x="259" y="54" fill="var(--dim)" font-size="11.5" text-anchor="middle">sessionId</text>
+
+<rect x="300" y="20" width="240" height="86" rx="8" fill="none" stroke="var(--accent)" stroke-width="2.5"/>
+<text x="420" y="44" fill="var(--fg)" font-size="13.5" text-anchor="middle" font-weight="600">projects/&lt;slug&gt;/&lt;sid&gt;.jsonl</text>
+<text x="420" y="64" fill="var(--dim)" font-size="12" text-anchor="middle">转录 · 只追加 · 本机 72 个</text>
+<text x="420" y="82" fill="var(--dim)" font-size="12" text-anchor="middle">对话 + 工具调用 + 记账行</text>
+<text x="420" y="98" fill="var(--dim)" font-size="12" text-anchor="middle">最大的一个 22.1 MB</text>
+
+<line x1="420" y1="106" x2="420" y2="150" stroke="var(--good)" stroke-width="2"/>
+<polygon points="420,150 416,142 424,142" fill="var(--good)"/>
+<text x="472" y="132" fill="var(--dim)" font-size="11.5" text-anchor="middle">同名子目录</text>
+
+<rect x="300" y="150" width="240" height="74" rx="8" fill="none" stroke="var(--warn)" stroke-width="2.5"/>
+<text x="420" y="174" fill="var(--fg)" font-size="13.5" text-anchor="middle" font-weight="600">&lt;sid&gt;/subagents/</text>
+<text x="420" y="193" fill="var(--dim)" font-size="12" text-anchor="middle">agent-*.jsonl 小弟的完整转录</text>
+<text x="420" y="211" fill="var(--dim)" font-size="12" text-anchor="middle">agent-*.meta.json 任务描述</text>
+
+<line x1="118" y1="106" x2="118" y2="240" stroke="var(--good)" stroke-width="2"/>
+<polygon points="118,240 114,232 122,232" fill="var(--good)"/>
+<text x="118" y="180" fill="var(--dim)" font-size="11.5" text-anchor="middle">sessionId</text>
+
+<rect x="18" y="240" width="200" height="74" rx="8" fill="none" stroke="var(--warn)" stroke-width="2.5"/>
+<text x="118" y="264" fill="var(--fg)" font-size="13.5" text-anchor="middle" font-weight="600">tasks/&lt;sid&gt;/&lt;n&gt;.json</text>
+<text x="118" y="283" fill="var(--dim)" font-size="12" text-anchor="middle">待办清单 · 一条一个文件</text>
+<text x="118" y="301" fill="var(--dim)" font-size="12" text-anchor="middle">本机只有 7 个 session 有</text>
+
+<rect x="570" y="150" width="112" height="74" rx="8" fill="none" stroke="var(--bad)" stroke-width="2" stroke-dasharray="5 4"/>
+<text x="626" y="180" fill="var(--dim)" font-size="12" text-anchor="middle">工作区</text>
+<text x="626" y="199" fill="var(--dim)" font-size="12" text-anchor="middle">git / docs</text>
+<text x="626" y="217" fill="var(--dim)" font-size="11.5" text-anchor="middle">（路 C）</text>
+<line x1="540" y1="63" x2="626" y2="63" stroke="var(--bad)" stroke-width="1.6" stroke-dasharray="4 4"/>
+<line x1="626" y1="63" x2="626" y2="150" stroke="var(--bad)" stroke-width="1.6" stroke-dasharray="4 4"/>
+<text x="600" y="54" fill="var(--dim)" font-size="11.5" text-anchor="middle">cwd</text>
+</svg><figcaption>四个仓和把它们串起来的键。<b>注意左上角那个框是按 pid 命名的，不是按 session</b>——
+这是最容易踩的坑，见第 6 节第一条。实线箭头标的是"用哪个字段能跳到下一个仓"。</figcaption></figure>
+
+<h4>① 注册表 <code>~/.claude/sessions/&lt;pid&gt;.json</code></h4>
+<p>每个活着的 session 一条。本机现有 48 条 <code>.json</code>（另有若干 <code>.key</code> 文件，无视即可）。
+实测出现过的全部字段：</p>
+<pre><code>{
+  "pid": 1120,
+  "sessionId": "c6b3b52c-f8ca-45a8-9595-695753800296",
+  "cwd": "C:\\Users\\vivre\\Desktop\\workspace\\电机在线监测",
+  "startedAt": 1787366762807,          // 毫秒
+  "procStart": "134318403618984083",   // 用来识别 pid 复用
+  "version": "2.1.237",
+  "peerProtocol": 1,
+  "peerFeatures": ["notify_idle"],
+  "kind": "interactive",
+  "entrypoint": "claude-desktop",
+  "messagingSocketPath": "\\\\.\\pipe\\cc-msg-403563cb5dbf0a5fbdc8263623ecb84d",
+  "name": "claude-1a",                 // ← SendMessage 的收件地址
+  "nameSource": "derived",
+  "nameSince": 1787366762807
+}</code></pre>
+<p>这里<b>没有任何 fork / parent 字段</b>——实测扫过全部 48 条，
+没有一条包含 "fork" 字样。血缘要靠别的办法找，见第 3 节。</p>
+
+<h4>② 转录 <code>~/.claude/projects/&lt;slug&gt;/&lt;sessionId&gt;.jsonl</code></h4>
+<p><code>&lt;slug&gt;</code> 是 cwd 把非字母数字全换成 <code>-</code> 得到的，比如
+<code>D:\avatar</code> → <code>D--avatar</code>。注意<b>中文路径会被压成一串连字符</b>
+（<code>C--Users-vivre-Desktop-workspace-------</code>），所以别想着从 slug 反推路径——
+要拿路径就读注册表的 <code>cwd</code>。找转录文件<b>直接用 sessionId 全目录 glob</b> 最省事：</p>
+<pre><code>glob.glob(os.path.join(PROJECTS_DIR, "*", session_id + ".jsonl"))</code></pre>
+<p>文件是 <em class="k">JSONL</em>（每行一个独立 JSON 对象），<b>只追加不重写</b>。
+本机 72 个转录文件分布在 25 个项目目录下，最大的一个 22.1 MB。
+按尾部 200 KB × 72 个文件抽样，出现过的记录类型和条数：</p>
+<table>
+<tr><th>type</th><th>条数</th><th>是什么</th><th>对你有没有用</th></tr>
+<tr><td><code>assistant</code></td><td>1977</td><td>模型的输出（文字 / 思考 / 工具调用）</td><td><b>核心</b>：状态判定全靠它</td></tr>
+<tr><td><code>user</code></td><td>1149</td><td>人类输入 <b>或</b> 工具结果回填</td><td>要区分，见下</td></tr>
+<tr><td><code>attachment</code></td><td>565</td><td>系统塞进来的东西（如剩余 token 提醒）</td><td>基本无用</td></tr>
+<tr><td><code>last-prompt</code></td><td>339</td><td>人类最后<b>真正打的那句话</b></td><td><b>很有用</b></td></tr>
+<tr><td><code>custom-title</code></td><td>316</td><td>人类起的标题</td><td><b>认亲靠它</b></td></tr>
+<tr><td><code>queue-operation</code></td><td>261</td><td>排队等处理的输入</td><td><b>很有用</b>：对方接下来要做什么</td></tr>
+<tr><td><code>ai-title</code></td><td>257</td><td>模型自动生成的标题</td><td>次选标题</td></tr>
+<tr><td><code>mode</code></td><td>247</td><td>当前权限模式（normal / …）</td><td>偶尔有用</td></tr>
+<tr><td><code>system</code></td><td>95</td><td>hook 执行摘要等</td><td>诊断用</td></tr>
+<tr><td><code>atis-latch</code></td><td>72</td><td>内部状态锁存</td><td>无</td></tr>
+<tr><td><code>bridge-session</code></td><td>20</td><td>云端桥接会话 id</td><td>无</td></tr>
+<tr><td><code>relocated</code></td><td>13</td><td>cwd 被改过</td><td>注意：cwd 可能已经不是注册表那个</td></tr>
+<tr><td><code>frame-link</code></td><td>3</td><td>发布出去的 Artifact 链接</td><td><b>有用</b>：对方的成品在哪</td></tr>
+</table>
+
+<div class="card note"><b>记账行没有 timestamp，也没有 message。</b>
+<code>last-prompt</code> / <code>custom-title</code> / <code>mode</code> 这几类是纯记账，
+<b>绝不能</b>拿它们当"最后一条消息"。筛选真正的对话必须同时卡两个条件：
+<pre><code>msgs = [e for e in entries
+        if e.get("type") in ("user", "assistant")
+        and isinstance(e.get("message"), dict)]</code></pre>
+少了后半个条件，你会拿到一条没有 timestamp 的记账行，然后算出 <code>lastTs = None</code>。</div>
+
+<h4>③ 待办 <code>~/.claude/tasks/&lt;sessionId&gt;/&lt;n&gt;.json</code></h4>
+<p>目录名就是 sessionId（本机 7 个目录，7/7 都能在转录文件名里找到对应）。
+每条待办一个文件，文件名是序号。一条长这样：</p>
+<pre><code>{
+  "id": "5",
+  "subject": "更新 CLAUDE.md 与 _test/预期结果.md",
+  "description": "改掉「不建计划任务」那条；补退出码 4、-Scheduled、日志保留…",
+  "activeForm": "更新契约与测试文档",
+  "status": "completed",          // completed / in_progress / pending
+  "blocks": [], "blockedBy": []   // 依赖关系
+}</code></pre>
+<p>这是<b>信噪比最高</b>的一个仓：不用解析几十 MB 的转录，直接就能得到
+"完成 27 / 共 29，正在做：验证并提交"。实测本机 7 个 session 的清单状态：</p>
+<pre><code>1a930605  11条 {completed:9, pending:2}
+219f346d   6条 {completed:6}
+2659399e   5条 {completed:3, in_progress:1, pending:1}   ▶ 正在做: 处理 IDB 附件
+27de7dc7   5条 {completed:5}
+81ddcb56  18条 {completed:18}
+99fdcc37   9条 {completed:5, pending:4}
+c6234209  29条 {completed:27, in_progress:1, pending:1}  ▶ 正在做: 验证并提交</code></pre>
+
+<h4>④ 小弟 <code>~/.claude/projects/&lt;slug&gt;/&lt;sid&gt;/subagents/</code></h4>
+<p>注意这个目录跟转录文件<b>同名并列</b>：<code>&lt;sid&gt;.jsonl</code> 是文件，<code>&lt;sid&gt;/</code> 是目录。
+里面每个后台 agent 两个文件：<code>agent-&lt;id&gt;.jsonl</code>（它自己的完整转录，实测最大 527 KB / 91 行）
+和 <code>agent-&lt;id&gt;.meta.json</code>：</p>
+<pre><code>{
+  "agentType": "general-purpose",
+  "description": "Security review of backup app",
+  "toolUseId": "toolu_01Y4TyDHsoqCV7v94wDvAita",   // ← 指回主转录里那次调用
+  "spawnDepth": 1,
+  "model": "opus"
+}</code></pre>
+<p>本机共 16 个 meta 文件。<code>toolUseId</code> 是把小弟接回主线的钥匙。</p>
+
+<div class="card why"><b>为什么 ClaudeZoo 不用 meta 文件判断"小弟还在不在跑"</b>：
+最直觉的做法是数一数 <code>subagents/</code> 下有几个 meta——但那是<b>历史全集</b>，
+跑完的也留在那儿，数出来永远只多不少。实测早期版本就栽在这：一个 49 MB 的转录报出
+"4 个还在跑"，其实结果早回来了。正确的判据在转录里，见 4.4。</div>
+
+
+<h2 id="s3">3. 找到"兄弟"：为什么不能靠 sessionId</h2>
+
+<h3>3.1 要解决什么</h3>
+<p>你是一个 fork，你想找到"跟我同源的另外几个 session"。
+最自然的想法是找一个 parent 字段顺藤摸瓜。<b>没有这个字段</b>。
+更糟的是，<b>sessionId 本身就不稳定</b>——同一条工作线，关掉再打开就换一个 id。</p>
+
+<h3>3.2 怎么做：先看血缘的真实痕迹</h3>
+<p>fork 的时候，Claude Code 会把父会话的历史<b>整段复制</b>进新文件，
+而<b>复制进来的那些行仍然带着父会话的 sessionId</b>。
+于是出现一个可检测的特征：<b>文件名 ≠ 文件里记录的 sessionId</b>。</p>
+<p>本机 72 个转录文件里，有 3 个存在这种不一致。逐行扫描其中一个：</p>
+<pre><code>2b3a3958-….jsonl   共 4431 行  10.9 MB
+    7f8c432c   2903 条  首次出现在行 0      ← 继承来的历史
+    2b3a3958   1528 条  首次出现在行 2903   ← 自己的记录从这儿开始</code></pre>
+<p>切换点非常干净：行 0–2902 全是父会话 <code>7f8c432c</code> 的，行 2903 起换成自己的。
+这就是<em class="k">fork 点</em>。同一个父会话还派生出另外两个：</p>
+<table>
+<tr><th>文件</th><th>总行数</th><th>继承自</th><th>继承了多少行</th><th>标题</th></tr>
+<tr><td><code>7f8c432c</code></td><td>2921</td><td>—</td><td>—</td><td>开发电机在线监测算法库和模块原型</td></tr>
+<tr><td><code>119e76fa</code></td><td>1872</td><td><code>7f8c432c</code></td><td>1866</td><td>淮北矿业电机在线监测</td></tr>
+<tr><td><code>20ae1d90</code></td><td>2925</td><td><code>7f8c432c</code></td><td>2903</td><td>淮北矿业电机在线监测 (fork prototype)</td></tr>
+<tr><td><code>2b3a3958</code></td><td>4431</td><td><code>7f8c432c</code></td><td>2903</td><td>淮北矿业电机在线监测 (fork implement)</td></tr>
+</table>
+<p>继承行数还告诉你<b>在父会话的哪一刻分的叉</b>：1866 行那次分得早，2903 行那两次分得晚
+（而且是同一个点分出去的两条）。</p>
+
+<div class="card fail"><b>但这个办法会漏。</b>实测当下活着的三个"电机在线监测" session：
+<pre><code>2b3a3958   4431 行 = 2903 继承 + 1528 自己   ← 血缘可见 ✔
+579c0c4b   1016 行，全部是自己的               ← 标题写着 (fork prototype)，但查不出血缘 ✘
+c6b3b52c    993 行，全部是自己的               ← 名字像"父会话"，其实也不是 7f8c432c</code></pre>
+<code>579c0c4b</code> 明明是 <code>20ae1d90</code> 那条 prototype 线的延续（标题一模一样），
+但它的转录里<b>一行继承历史都没有</b>。原因是：fork 出来的会话<b>关掉再恢复</b>时，
+新会话拿到新的 sessionId、开一个全新的转录文件，<b>不再复制历史</b>——血缘线索到此为止。
+<br><br>所以：<b>"文件名≠内部 id" 只能识别 fork 后<u>还没重启过</u>的那一代。</b>
+它是一条有用的线索，不是可靠的族谱。</div>
+
+<h3>3.3 为什么选它：真正稳定的身份是 cwd + 标题</h3>
+<div class="card why">
+sessionId 每次重启都换，<b>不能</b>当作"这条工作线"的身份。
+实测那 4 个 id 全都指向同一条工作线，人类眼里它就是"电机在线监测"这一个项目。
+真正跨重启保持稳定的是两样东西：
+<ul>
+<li><b><code>cwd</code></b>——注册表里的工作目录。上面三个活着的 session，cwd 完全相同。</li>
+<li><b><code>custom-title</code></b>——人类起的标题，重启后会带过来，而且 fork 通常在后面加后缀：
+<code>… (fork prototype)</code> / <code>… (fork implement)</code>。</li>
+</ul>
+<b>找兄弟的正确姿势：按 cwd 分组，再看标题的公共前缀。</b>
+血缘扫描留着当补充证据用（它能告诉你分叉点在哪），但不要拿它当主判据。
+</div>
+
+<figure><svg width="700" height="250" viewBox="0 0 700 250" xmlns="http://www.w3.org/2000/svg">
+<text x="20" y="24" fill="var(--dim)" font-size="12.5">父会话（已关闭，转录仍在磁盘上）</text>
+<rect x="20" y="34" width="180" height="42" rx="6" fill="none" stroke="var(--dim)" stroke-width="2"/>
+<text x="110" y="60" fill="var(--fg)" font-size="13" text-anchor="middle">7f8c432c · 2921 行</text>
+
+<line x1="200" y1="55" x2="250" y2="55" stroke="var(--good)" stroke-width="2"/>
+<line x1="250" y1="55" x2="250" y2="120" stroke="var(--good)" stroke-width="2"/>
+<line x1="250" y1="120" x2="300" y2="120" stroke="var(--good)" stroke-width="2"/>
+<polygon points="300,120 292,116 292,124" fill="var(--good)"/>
+<text x="252" y="98" fill="var(--good)" font-size="11.5">复制 2903 行</text>
+
+<rect x="300" y="99" width="200" height="42" rx="6" fill="none" stroke="var(--good)" stroke-width="2.5"/>
+<text x="400" y="117" fill="var(--fg)" font-size="12.5" text-anchor="middle">2b3a3958 (fork implement)</text>
+<text x="400" y="134" fill="var(--good)" font-size="11.5" text-anchor="middle">血缘可见 ✔ 活着</text>
+
+<line x1="250" y1="120" x2="250" y2="190" stroke="var(--bad)" stroke-width="2" stroke-dasharray="5 4"/>
+<line x1="250" y1="190" x2="300" y2="190" stroke="var(--bad)" stroke-width="2" stroke-dasharray="5 4"/>
+<polygon points="300,190 292,186 292,194" fill="var(--bad)"/>
+<rect x="300" y="169" width="200" height="42" rx="6" fill="none" stroke="var(--dim)" stroke-width="1.6" stroke-dasharray="4 4"/>
+<text x="400" y="194" fill="var(--dim)" font-size="12.5" text-anchor="middle">20ae1d90 (fork prototype)</text>
+<line x1="500" y1="190" x2="548" y2="190" stroke="var(--bad)" stroke-width="2" stroke-dasharray="5 4"/>
+<polygon points="548,190 540,186 540,194" fill="var(--bad)"/>
+<text x="524" y="180" fill="var(--bad)" font-size="11" text-anchor="middle">重启</text>
+<rect x="548" y="169" width="134" height="42" rx="6" fill="none" stroke="var(--bad)" stroke-width="2.5"/>
+<text x="615" y="187" fill="var(--fg)" font-size="12.5" text-anchor="middle">579c0c4b</text>
+<text x="615" y="203" fill="var(--bad)" font-size="11" text-anchor="middle">血缘断了 ✘ 活着</text>
+
+<text x="20" y="235" fill="var(--dim)" font-size="12">把这三个认成一家人的，不是 id，是相同的 cwd 和标题前缀「淮北矿业电机在线监测」。</text>
+</svg><figcaption>一次 fork 加一次重启，血缘线索就断了。绿色实线是"复制历史"（可检测），
+红色虚线是"新开文件"（不可检测）。</figcaption></figure>
+
+
+<h2 id="s4">4. 判断"它现在干到哪一步"</h2>
+
+<h3>4.1 要解决什么</h3>
+<p>拿到转录之后，你要回答一个很具体的问题：<b>球现在在谁手上？</b>
+是它在算、在等工具、在等人类，还是在等自己派出去的小弟？
+判错的后果很实际：以为它在等人类，跑去催人类；其实它正跑得欢。</p>
+
+<h3>4.2 怎么做：<code>stop_reason</code> 才是权威信号</h3>
+<p>直觉做法是看最后一条 <code>assistant</code> 记录里有没有 <code>tool_use</code> 块：
+有就是在干活，没有就是说完了。<b>这是错的。</b></p>
+
+<div class="card fail"><b>一个回合会被拆成好几条记录。</b>
+思考 → 文字 → 工具调用，这三条<b>各自是一条独立的 assistant 记录</b>，
+而且三条的 <code>stop_reason</code> 都是 <code>tool_use</code>。
+你轮询的时刻要是正好落在中间那条（只有文字、没有 <code>tool_use</code> 块），
+"有没有 tool_use 块"这个判据就会把一个<b>干得正欢</b>的 session 判成"等你回话"。
+正确的判据是 <code>message.stop_reason</code>：
+<table>
+<tr><th><code>stop_reason</code></th><th>含义</th></tr>
+<tr><td><code>end_turn</code></td><td>整轮真的答完了，球在人类那边</td></tr>
+<tr><td><code>tool_use</code></td><td>话说到一半，马上要动手</td></tr>
+</table></div>
+
+<p>把 <code>stop_reason</code>、最后一条记录的形状、静置时长三者合起来，
+就是 <code>zoo_server.py</code> 里 <code>classify()</code> 的判定表
+（<code>DOZE_AFTER = 300</code> 秒是"打盹"门槛）：</p>
+<table>
+<tr><th>最后一条记录</th><th>附加条件</th><th>判定</th><th>球在谁手上</th></tr>
+<tr><td rowspan="5">assistant</td><td>含 <code>tool_use</code> 块，静置 &lt; 300s</td><td>正在用某工具</td><td>它自己</td></tr>
+<tr><td>含 <code>tool_use</code> 块，静置 &gt; 300s</td><td><b>卡住了</b></td><td>可能需要人类</td></tr>
+<tr><td><code>end_turn</code> 且有在跑的小弟</td><td>等后台 agent</td><td>小弟</td></tr>
+<tr><td><code>end_turn</code>，无小弟</td><td>答完了 / 打盹</td><td><b>人类</b></td></tr>
+<tr><td>非 <code>end_turn</code> 且静置 &gt; 300s</td><td>半路停下（被 Esc 或断了）</td><td><b>人类</b></td></tr>
+<tr><td>user</td><td>含 <code>tool_result</code> 块</td><td>在消化工具结果</td><td>它自己</td></tr>
+<tr><td>user</td><td>不含</td><td>在读新指令</td><td>它自己</td></tr>
+</table>
+
+<h3>4.3 还有两个高价值信号</h3>
+<p><b>人类最后说的那句话</b>——用 <code>last-prompt</code> 记录，不要从 <code>user</code> 消息里翻：</p>
+<pre><code>{"type": "last-prompt",
+ "lastPrompt": "扩充下片单，它12个弄完又循环到1了",
+ "leafUuid": "b78cacaf-…", "sessionId": "22b7e08b-…"}</code></pre>
+<div class="card why"><b>为什么不从 user 消息里翻</b>：<code>user</code> 类型的记录里混着
+工具结果回填、图片附件、<code>/skill</code> 展开后的一大段模板——它们都长得像"人类说的话"，
+但都不是。<code>last-prompt</code> 是 Claude Code 专门记的一行，直接就是人类打进去的原文。</div>
+
+<p><b>排队等它处理的输入</b>——<code>queue-operation</code>，这是"对方接下来要做什么"的直接证据：</p>
+<pre><code>{"type": "queue-operation", "operation": "enqueue",
+ "timestamp": "2026-08-22T03:39:24.538Z", "sessionId": "22b7e08b-…",
+ "content": "再doc里生成下查 session info的方式…"}</code></pre>
+
+<h3>4.4 在跑的后台小弟：靠通知配对，不靠工具结果</h3>
+<p>后台 <code>Agent</code> 是<b>发射后即返回</b>的：<code>tool_result</code> 立刻回一句
+<code>Async agent launched successfully</code>。所以拿 <code>tool_use</code> ↔ <code>tool_result</code>
+配对<b>永远配得上</b>，判断不出跑没跑完。真正的完工信号是后面单独追加的一条
+<code>&lt;task-notification&gt;</code>（一条纯文本 user 消息），里面的
+<code>&lt;tool-use-id&gt;</code> 指回当初那次调用。所以配对的两头是：</p>
+<pre><code>tool_use.id   ←→   &lt;task-notification&gt; 里的 &lt;tool-use-id&gt;</code></pre>
+
+<div class="card note"><b>两个真实踩过的坑，抄这段代码时必须一起抄：</b>
+<ol>
+<li><b>只扫尾部窗口，两头都要在窗口内。</b>如果某个老会话的"发射"和"通知"都被甩出了尾部窗口，
+你两头都看不见，于是<b>不会</b>误报它"还在跑"。这是刻意的：宁可漏报也不误报。</li>
+<li><b>先确认这条结果属于 Agent 调用</b>（<code>tool_use_id in desc</code>），再看内容。
+否则任何工具的输出只要正文里恰好出现 "Async agent launched" 这句话，就会被当成派出去一个小弟——
+实测把这句打印到终端做排查，就足以让自己那张卡凭空多出两个小弟。</li>
+</ol></div>
+
+
+<h2 id="s5">5. 现成探针：peek.py</h2>
+
+<h3>5.1 怎么用</h3>
+<pre><code>python peek.py              # 列出所有活着的 session 及其状态
+python peek.py 电机          # 只看 cwd/标题里带这两个字的，并展开细节
+python peek.py 2b3a3958     # 按 sessionId 前缀看某一个</code></pre>
+<p>2026-08-22 在本机的真实输出（带 <code>电机</code> 过滤，正是三个 fork 兄弟）：</p>
+<pre><code>活着的 session：3 个（过滤 '电机'）
+
+● c6b3b52c  淮北矿业电机在线监测
+   答完了，等人类 ｜ 1 分钟前 ｜ C:\Users\vivre\Desktop\workspace\电机在线监测
+   排队等它处理：这些信息需要什么电机信息吗？是不是需要能填能配置
+   人类最后一句：这些信息需要什么电机信息吗？是不是需要能填能配置
+   它最后一句：看了一遍代码，现状是「能存、能算，但不能填、也无处比对」…
+   可直接喊话（有消息管道）
+
+● 2b3a3958  淮北矿业电机在线监测 (fork implement)
+   打盹（球在人类那边） ｜ 10 分钟前 ｜ C:\Users\vivre\Desktop\workspace\电机在线监测
+   排队等它处理：…填个假名牌进去吧 demo时候看着也开心…
+   ⑂ fork 自 7f8c432c，继承了 2903 行历史
+   它最后一句：三件都办了。提交 `04651d0`。…
+
+● 579c0c4b  淮北矿业电机在线监测 (fork prototype)
+   打盹（球在人类那边） ｜ 40 分钟前 ｜ C:\Users\vivre\Desktop\workspace\电机在线监测
+   排队等它处理：把prototype起起来
+   它最后一句：起来了，浏览器面板已打开在演示壳首页。…</code></pre>
+<p>注意第三个没有 <code>⑂</code> 那一行——正是 3.2 节说的"重启后血缘线索断了"，
+但它照样被 <code>电机</code> 这个 cwd/标题过滤抓了出来。</p>
+
+<h3>5.2 完整代码</h3>
+<p>纯标准库，无依赖。核心部分：</p>
+
+<pre><code>import ctypes, glob, json, os, re, sys, time
+from ctypes import wintypes
+
+HOME     = os.path.expanduser("~")
+SESSIONS = os.path.join(HOME, ".claude", "sessions")
+PROJECTS = os.path.join(HOME, ".claude", "projects")
+TASKS    = os.path.join(HOME, ".claude", "tasks")
+TAIL     = 300_000
+
+# ---- 探活：Windows 上绝不能用 os.kill(pid, 0)，那是 TerminateProcess，真会杀人 ----
+if sys.platform == "win32":
+    _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+    def alive(pid):
+        h = _k32.OpenProcess(0x1000, False, pid)   # QUERY_LIMITED_INFORMATION
+        if not h:
+            return False
+        try:
+            code = wintypes.DWORD()
+            ok = _k32.GetExitCodeProcess(h, ctypes.byref(code))
+            return bool(ok) and code.value == 259  # STILL_ACTIVE
+        finally:
+            _k32.CloseHandle(h)
+else:
+    def alive(pid):
+        try:
+            os.kill(pid, 0)                        # POSIX 上 signal 0 才是真探活
+            return True
+        except OSError:
+            return False
+
+
+def tail_entries(path, limit=TAIL):
+    """只读文件尾部一段。转录能到 22 MB，整读既慢又没必要。"""
+    size = os.path.getsize(path)
+    with open(path, "rb") as f:
+        if size > limit:
+            f.seek(size - limit)
+            f.readline()                           # 这行大概率是半截的，扔掉
+        raw = f.read()
+    out = []
+    for line in raw.decode("utf-8", "ignore").splitlines():
+        line = line.strip()
+        if line.startswith("{"):
+            try:
+                out.append(json.loads(line))
+            except ValueError:
+                pass
+    return out
+
+
+def load_live():
+    """活着的 session。注意注册表是按 pid 命名的，同一个 session 会有好几条。"""
+    out = []
+    for p in sorted(glob.glob(os.path.join(SESSIONS, "*.json"))):
+        try:
+            meta = json.load(open(p, encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        pid = meta.get("pid")
+        if pid and not alive(int(pid)):
+            continue                               # pid 没了 = 幽灵条目
+        if meta.get("sessionId"):
+            out.append(meta)
+    # 按 sessionId 去重，留 startedAt 最新的那条
+    best = {}
+    for m in out:
+        k = m["sessionId"]
+        if k not in best or (m.get("startedAt") or 0) &gt; (best[k].get("startedAt") or 0):
+            best[k] = m
+    return list(best.values())
+
+
+def agents_running(entries):
+    """派出去还没回来的后台 agent。两头是 tool_use.id ←→ 通知里的 &lt;tool-use-id&gt;。"""
+    desc, launched, finished = {}, set(), set()
+    for e in entries:
+        c = (e.get("message") or {}).get("content")
+        text = c if isinstance(c, str) else ""
+        if isinstance(c, list):
+            text = " ".join(b.get("text", "") for b in c
+                            if isinstance(b, dict) and b.get("type") == "text")
+        if "&lt;task-notification&gt;" in text:
+            finished.update(re.findall(r"&lt;tool-use-id&gt;(.*?)&lt;/tool-use-id&gt;", text))
+        if not isinstance(c, list):
+            continue
+        for b in c:
+            if not isinstance(b, dict):
+                continue
+            if b.get("type") == "tool_use" and b.get("name") in ("Agent", "Task"):
+                desc[b.get("id")] = ((b.get("input") or {}).get("description") or "后台任务")[:60]
+            elif b.get("type") == "tool_result" and b.get("tool_use_id") in desc:
+                # 必须先确认这条结果对应的调用【本身就是 Agent 工具】，再看内容，
+                # 否则任何提到 "Async agent launched" 的输出都会被误判成派出了小弟
+                body = b.get("content")
+                if isinstance(body, list):
+                    body = " ".join(x.get("text", "") for x in body if isinstance(x, dict))
+                if isinstance(body, str) and "Async agent launched" in body:
+                    launched.add(b.get("tool_use_id"))
+    return [desc.get(i, "后台任务") for i in launched if i not in finished]
+
+
+def todos_of(sid):
+    """tasks/&lt;sessionId&gt;/&lt;n&gt;.json —— 信噪比最高的一个仓。"""
+    out = []
+    for p in glob.glob(os.path.join(TASKS, sid, "*.json")):
+        try:
+            out.append(json.load(open(p, encoding="utf-8")))
+        except (OSError, ValueError):
+            pass
+    return out
+
+
+def lineage(sid, path):
+    """文件里记录的 sessionId 跟文件名不一致的那段 = 继承来的历史。
+    只对「fork 后还没重启过」的那一代有效，见文档第 3 节。"""
+    parent, inherited = None, 0
+    with open(path, encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
+            try:
+                s = json.loads(line).get("sessionId")
+            except ValueError:
+                continue
+            if s and s != sid:
+                parent, inherited = s, inherited + 1
+            elif s == sid:
+                break
+    return parent, inherited</code></pre>
+
+<p>状态判定（对应 4.2 那张表）：</p>
+<pre><code>last   = msgs[-1]
+m      = last.get("message") or {}
+blocks = m.get("content")
+idle   = now - last_ts
+
+if last.get("type") == "assistant" and isinstance(blocks, list):
+    tool = next((b for b in blocks if b.get("type") == "tool_use"), None)
+    if tool:
+        state = "正在用 %s" % tool.get("name")
+    elif m.get("stop_reason") == "end_turn":      # ← 权威信号，不是"有没有 tool_use 块"
+        state = ("等 %d 个后台 agent" % len(agents)) if agents else (
+                "打盹（球在人类那边）" if idle &gt; 300 else "答完了，等人类")
+    else:
+        state = "半路停下" if idle &gt; 300 else "话说一半，正要动手"
+else:
+    state = "打盹" if idle &gt; 300 else "在想"</code></pre>
+
+
+<h2 id="s6">6. 六个会骗你的地方</h2>
+
+<div class="card fail"><b>① 注册表是按 pid 存的，不是按 session。</b>
+文件名是 <code>&lt;pid&gt;.json</code>。同一个 session 每次重启/恢复都会多出一条，
+老条目要等那个 pid 真的死掉才消失。实测 <code>7f8c432c</code> 一个 sessionId
+占了 5 条注册表条目，<code>2b3a3958</code> 和 <code>579c0c4b</code> 各占 2 条。
+<b>不去重的话，同一个 session 会被你数成好几个。</b>（这正是 ClaudeZoo 早期"为什么有两个知识库"的原因。）
+去重方法：先按 pid 过滤掉死的，再按 sessionId 取 <code>startedAt</code> 最新的一条。
+本机实测 48 条 → 去重后 4 个活着的 session。</div>
+
+<div class="card fail"><b>② 文件 mtime 会骗人。</b>
+转录文件经常被 <code>mode</code> / <code>ai-title</code> 这类<b>记账记录</b>碰新，
+mtime 于是很新——但那个 session 可能已经 14 天没说过话了。
+<b>"多久没动静"必须按最后一条真实消息的 timestamp 算，不能用 <code>os.path.getmtime</code>。</b></div>
+
+<div class="card fail"><b>③ 尾部窗口会截断证据。</b>
+只读尾部 300 KB 是为了性能（本机最大的转录 22.1 MB，全读一次代价太大）。
+代价是：发生在更早的事你看不见。这对"在跑的小弟"是<b>安全的</b>——两头都看不见就不会误报；
+但对"这个 session 一共做了什么"是<b>不安全的</b>——你只看到了最近一小段。
+要完整历史就得整文件扫，那时请做好几秒钟的心理准备。</div>
+
+<div class="card fail"><b>④ 待办清单覆盖率很低。</b>
+<code>tasks/</code> 只有用过 <code>TodoWrite</code> 的 session 才有。
+实测本机 48 条注册表条目对应只有 <b>7 个</b> session 有清单目录，而且其中只有 2 个还活着。
+<b>"没有清单"≠"没有进度"</b>，只是它没用这个工具。别把空清单当成对方没干活。</div>
+
+<div class="card fail"><b>⑤ cwd 可能已经变了。</b>
+转录里有 <code>relocated</code> 记录（本机抽样到 13 条），表示这个 session 的工作目录被改过。
+注册表里的 <code>cwd</code> 是启动时的值。按 cwd 找兄弟时，
+如果有人中途 relocate 过，分组就会错。</div>
+
+<div class="card fail"><b>⑥ 你读到的永远是"刚才"，不是"现在"。</b>
+转录是异步落盘的，对方正在生成的那段文字还没写进文件。
+一个显示"正在用 Bash"的 session，此刻可能已经跑完三个工具了。
+<b>不要基于转录去做需要强实时性的判断</b>（比如"我等它写完这个文件再动手"）——
+真要同步，用第 1 节的路 B 喊话，或者约定用工作区里的文件/锁做握手。</div>
+
+<h3>最后：给 fork 兄弟的实用配方</h3>
+<table>
+<tr><th>你想知道</th><th>最省事的做法</th></tr>
+<tr><td>还有哪些兄弟活着</td><td>注册表按 sessionId 去重 + 按 <code>cwd</code> 过滤</td></tr>
+<tr><td>它是谁（哪条工作线）</td><td>最后一条 <code>custom-title</code>，其次 <code>ai-title</code></td></tr>
+<tr><td>球在谁手上</td><td>最后一条 assistant 的 <code>stop_reason</code> + 4.2 判定表</td></tr>
+<tr><td>它做完了多少</td><td><code>tasks/&lt;sid&gt;/</code> 数 status；没有就看转录尾部</td></tr>
+<tr><td>它接下来要做什么</td><td><code>queue-operation</code> 的 <code>enqueue</code> 内容</td></tr>
+<tr><td>人类给它的最新指令</td><td><code>last-prompt</code></td></tr>
+<tr><td>它已经交付了什么</td><td>共享工作区的 <code>git log</code> / <code>frame-link</code> 里的 Artifact</td></tr>
+<tr><td>需要它做个决定</td><td><code>ListAgents</code> 找到 <code>name</code>，再 <code>SendMessage</code></td></tr>
+</table>
+
+</div></body></html>

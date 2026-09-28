@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude 会话管理</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='%23d97757'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #0e1014;
+    --panel: #151920;
+    --panel-2: #1b202a;
+    --line: #262d3a;
+    --text: #e8ebf0;
+    --muted: #939db1;
+    --accent: #d97757;
+    --danger: #ef5350;
+    --ok: #4ade80;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.6 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  button, input { font: inherit; color: inherit; }
+
+  /* ---------- 顶栏 ---------- */
+  .top {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 14px 22px;
+    background: rgba(14,16,20,.92);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: .2px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); }
+  .badge {
+    font-size: 11px; padding: 2px 8px; border-radius: 20px;
+    background: rgba(74,222,128,.12); color: var(--ok);
+    border: 1px solid rgba(74,222,128,.25);
+  }
+  .stats { color: var(--muted); font-size: 13px; }
+  .stats b { color: var(--text); font-weight: 600; }
+  .actions { margin-left: auto; display: flex; gap: 10px; align-items: center; }
+  #search {
+    width: 260px; padding: 7px 12px; border-radius: 8px;
+    background: var(--panel); border: 1px solid var(--line); outline: none;
+  }
+  #search:focus { border-color: var(--accent); }
+  .actions button {
+    padding: 7px 14px; border-radius: 8px; cursor: pointer;
+    background: var(--panel); border: 1px solid var(--line);
+  }
+  .actions button:hover { border-color: var(--accent); color: var(--accent); }
+  .actions button:disabled { opacity: .5; cursor: default; }
+
+  /* ---------- 工作区 ---------- */
+  /* 底部留白给浮动批量条让位，不然它会把最后几行盖住 */
+  main { padding: 18px 22px 96px; max-width: 1180px; margin: 0 auto; }
+  .loading, .empty { color: var(--muted); padding: 60px 0; text-align: center; }
+
+  .ws { margin-bottom: 14px; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--panel); }
+  .ws-head {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 12px 16px; cursor: pointer; user-select: none;
+  }
+  .ws-head:hover { background: var(--panel-2); }
+  .caret { color: var(--muted); transition: transform .15s; font-size: 11px; width: 10px; }
+  .ws.collapsed .caret { transform: rotate(-90deg); }
+  .ws-path { font-family: "Cascadia Mono", Consolas, monospace; font-size: 13.5px; color: var(--text); word-break: break-all; }
+  .ws-meta { margin-left: auto; display: flex; gap: 14px; align-items: center; color: var(--muted); font-size: 12.5px; white-space: nowrap; }
+  .ws.collapsed .ws-body { display: none; }
+  /* 行列表：不要外框和行距，每一行用自己的下边框划开 */
+  .ws-body { border-top: 1px solid var(--line); padding: 3px 0; }
+
+  /* ---------- 会话行 ---------- */
+  .sess { border-bottom: 1px solid var(--line); }
+  .sess:last-child { border-bottom: none; }
+
+  .sess-head {
+    display: flex; align-items: center; gap: 14px;
+    padding: 5px 14px; cursor: pointer; user-select: none;
+  }
+  .sess-head:hover { background: var(--panel-2); }
+  .sess.open > .sess-head { background: var(--panel-2); }
+
+  /* 标题吃掉剩余宽度，过长的部分省略 */
+  .sess-title { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; font-size: 13.5px; }
+  .sess-title .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* 后三列固定宽度右对齐，每一行都纵向对齐成列 */
+  .sess-size { flex: 0 0 70px; text-align: right; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .sess-when { flex: 0 0 104px; text-align: right; color: var(--muted); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+  /* 按钮常驻占位但压得很淡，鼠标到这一行才亮起来。
+     用 opacity 而不是 display —— 否则悬停时按钮会凭空占位、整行文字跟着跳。 */
+  .sess-head .btn-del {
+    flex: 0 0 auto; padding: 3px 10px; border-radius: 6px; cursor: pointer; font-size: 12px;
+    background: transparent; color: var(--danger);
+    border: 1px solid rgba(239,83,80,.35);
+    opacity: .18; transition: opacity .12s;
+  }
+  .sess-head:hover .btn-del, .sess.open > .sess-head .btn-del { opacity: 1; }
+  .sess-head .btn-del:hover { background: rgba(239,83,80,.12); }
+
+  /* ---------- 多选 ---------- */
+  /* 勾选框常驻但压得很淡。跟删除按钮同理：完全藏起来，就没人知道能多选。 */
+  .pick {
+    flex: 0 0 auto; width: 14px; height: 14px; margin: 0;
+    accent-color: var(--accent); cursor: pointer;
+    opacity: .3; transition: opacity .12s;
+  }
+  .sess-head:hover .pick, .sess.picked .pick, .ws-head:hover .pick { opacity: 1; }
+  .sess.picked, .sess.picked > .sess-head { background: rgba(217,119,87,.08); }
+
+  /* ---------- 底部批量操作条 ---------- */
+  .batchbar {
+    position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 14px;
+    padding: 10px 16px; border-radius: 12px;
+    background: var(--panel-2); border: 1px solid var(--line);
+    box-shadow: 0 12px 32px rgba(0,0,0,.5);
+    z-index: 20;
+  }
+  .batchbar[hidden] { display: none; }
+  .batchbar .n { color: var(--accent); font-weight: 600; }
+  .batchbar button {
+    padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: 13px;
+    background: var(--panel); border: 1px solid var(--line);
+  }
+  .batchbar button:hover { border-color: var(--accent); color: var(--accent); }
+  .batchbar button.primary { background: var(--accent); color: #fff; border-color: transparent; }
+  .batchbar button.primary:hover { filter: brightness(1.08); color: #fff; }
+
+  /* ---------- 展开区 ---------- */
+  .sess-turns { display: none; }
+  .sess.open .sess-turns { display: block; padding: 1px 14px 12px 30px; }
+
+  .tags { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 9px; }
+  .tag { font-size: 11px; color: var(--muted); background: rgba(255,255,255,.045); border: 1px solid var(--line); border-radius: 4px; padding: 1px 7px; }
+  .tag.mem { color: var(--ok); border-color: rgba(74,222,128,.3); background: rgba(74,222,128,.07); }
+
+  .turns { border-left: 2px solid var(--line); padding-left: 12px; display: flex; flex-direction: column; gap: 7px; }
+
+  /* 左缩进对齐 .turns 的内容起始位置（2px 边框 + 12px 内边距） */
+  .btn-more {
+    margin: 10px 0 0 14px; padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;
+    background: transparent; color: var(--muted); border: 1px solid var(--line);
+  }
+  .btn-more:hover { color: var(--accent); border-color: var(--accent); }
+  .turn { display: flex; gap: 9px; font-size: 12.5px; }
+  .who { flex: 0 0 48px; font-size: 11px; padding-top: 2px; color: var(--muted); }
+  .turn-user .who { color: var(--accent); }
+  .txt { color: #c9d0dd; word-break: break-word; }
+  .turn-user .txt { color: #dfe4ec; }
+
+  /* ---------- 弹窗 ---------- */
+  dialog {
+    background: var(--panel); color: var(--text); border: 1px solid var(--line);
+    border-radius: 12px; padding: 0; width: min(820px, 92vw); max-height: 88vh;
+  }
+  dialog::backdrop { background: rgba(0,0,0,.6); backdrop-filter: blur(2px); }
+  .modal-head { display: flex; align-items: center; gap: 12px; padding: 15px 18px; border-bottom: 1px solid var(--line); }
+  .modal-head h2 { font-size: 15px; margin: 0; font-weight: 600; }
+  .modal-head .sid { font-family: Consolas, monospace; font-size: 11px; color: var(--muted); }
+  .x { margin-left: auto; background: none; border: none; color: var(--muted); font-size: 20px; cursor: pointer; line-height: 1; }
+  .x:hover { color: var(--text); }
+  .modal-body { padding: 16px 18px; overflow: auto; max-height: 62vh; }
+  .row { display: flex; align-items: center; gap: 12px; margin-bottom: 13px; flex-wrap: wrap; }
+  .lbl { color: var(--muted); font-size: 12.5px; }
+  .seg { display: flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+  .seg button { background: var(--panel-2); border: none; padding: 6px 13px; cursor: pointer; font-size: 12.5px; color: var(--muted); }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button.on { background: var(--accent); color: #fff; }
+  .chk { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; margin-bottom: 13px; color: #c9d0dd; }
+  .chk input { accent-color: var(--accent); width: 15px; height: 15px; }
+  pre {
+    background: #0b0d11; border: 1px solid var(--line); border-radius: 8px;
+    padding: 13px 15px; margin: 0; overflow: auto;
+    font: 12.5px/1.65 "Cascadia Mono", Consolas, monospace;
+    white-space: pre-wrap; word-break: break-all; color: #cdd6e4;
+    /* 批量命令可以很长，限高让它自己滚，别把下面的说明顶出视野 */
+    max-height: 300px;
+  }
+  .note { margin-top: 12px; font-size: 12.5px; color: var(--muted); border-left: 2px solid var(--line); padding-left: 11px; }
+  .note b { color: #c9d0dd; font-weight: 600; }
+  .modal-foot { display: flex; gap: 10px; padding: 13px 18px; border-top: 1px solid var(--line); align-items: center; }
+  .modal-foot .spacer { margin-left: auto; }
+  .primary { padding: 8px 18px; border-radius: 8px; border: none; cursor: pointer; background: var(--accent); color: #fff; font-weight: 500; }
+  .primary:hover { filter: brightness(1.08); }
+  .ghost { padding: 8px 16px; border-radius: 8px; cursor: pointer; background: transparent; border: 1px solid var(--line); color: var(--muted); }
+  .ghost:hover { color: var(--text); }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="brand">
+    <span class="dot"></span>
+    <h1>Claude 会话管理</h1>
+    <span class="badge" title="这个工具只读取文件，不提供任何删除能力">只读</span>
+  </div>
+  <div class="stats" id="stats">正在扫描…</div>
+  <div class="actions">
+    <input id="search" type="search" placeholder="搜索标题、路径或对话内容…">
+    <button id="collapse-all" title="把所有工作区收起来">全部折叠</button>
+    <button id="refresh">重新扫描</button>
+  </div>
+</header>
+
+<main id="list"><div class="loading">正在扫描 ~/.claude/projects …</div></main>
+
+<div id="batchbar" class="batchbar" hidden>
+  <span>已选 <span class="n" id="batch-n">0</span> 个会话</span>
+  <button class="primary" id="batch-cmd">生成删除命令</button>
+  <button id="batch-clear">取消选择</button>
+</div>
+
+<dialog id="modal">
+  <div class="modal-head">
+    <div>
+      <h2 id="m-title"></h2>
+      <div class="sid" id="m-sid"></div>
+    </div>
+    <button class="x" data-close>×</button>
+  </div>
+  <div class="modal-body">
+    <div class="row">
+      <span class="lbl">命令格式</span>
+      <div class="seg" id="seg">
+        <button data-shell="powershell" class="on">PowerShell</button>
+        <button data-shell="bash">Git Bash / WSL</button>
+        <button data-shell="cmd">CMD</button>
+      </div>
+    </div>
+    <label class="chk"><input type="checkbox" id="with-extras" checked> 同时清理这个会话关联的其它数据</label>
+    <pre id="m-cmd"></pre>
+    <div class="note" id="m-note"></div>
+  </div>
+  <div class="modal-foot">
+    <button class="primary" id="m-copy">复制命令</button>
+    <button class="ghost" data-close>关闭</button>
+    <span class="spacer"></span>
+    <span class="lbl">本工具不会执行它，请自行粘贴到终端</span>
+  </div>
+</dialog>
+
+<script>
+'use strict';
+
+// ---------------------------------------------------------------- 工具函数
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
+function fmtSize(n) {
+  if (!n) return '0 B';
+  if (n < 1024) return n + ' B';
+  if (n < 1048576) return (n / 1024).toFixed(0) + ' KB';
+  if (n < 1073741824) return (n / 1048576).toFixed(1) + ' MB';
+  return (n / 1073741824).toFixed(2) + ' GB';
+}
+
+/** 09-17 14:23 —— 行里用的短格式，等宽数字好纵向对齐 */
+function fmtStamp(iso) {
+  const d = new Date(iso || 0);
+  if (isNaN(d.getTime())) return '—';
+  const p = (x) => String(x).padStart(2, '0');
+  return p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
+/** 3 天前 —— 行里放不下，挂到时间列的 title 上 */
+function fmtAgo(iso) {
+  const d = new Date(iso || 0);
+  if (isNaN(d.getTime())) return '';
+  const diff = Date.now() - d.getTime();
+  const M = 60000, H = 3600000, D = 86400000;
+  if (diff < M) return '刚刚';
+  if (diff < H) return Math.floor(diff / M) + ' 分钟前';
+  if (diff < D) return Math.floor(diff / H) + ' 小时前';
+  return Math.floor(diff / D) + ' 天前';
+}
+
+/** 工作区头部用的完整格式：09-17 14:23 · 3 天前 */
+function fmtTime(iso) {
+  const stamp = fmtStamp(iso);
+  if (stamp === '—') return '—';
+  const ago = fmtAgo(iso);
+  return ago ? stamp + ' · ' + ago : stamp;
+}
+
+// ---------------------------------------------------------------- 命令生成
+// 注意：这里只是把路径拼成一段文本，浏览器侧没有任何删除能力。
+
+const EXTRA_LABEL = {
+  subagents: '子 agent 记录',
+  fileHistory: '文件编辑历史',
+  tasks: '任务状态',
+  sessionEnv: '会话环境变量',
+};
+
+const psQuote = (p) => "'" + String(p).replace(/'/g, "''") + "'";
+const shQuote = (p) => "'" + String(p).replace(/'/g, "'\\''") + "'";
+const toPosix = (p) => String(p).replace(/\\/g, '/').replace(/^([A-Za-z]):/, (m, d) => '/' + d.toLowerCase());
+
+const SHELLS = {
+  powershell: {
+    file: (p) => 'Remove-Item -LiteralPath ' + psQuote(p) + ' -Force',
+    dir: (p) => 'Remove-Item -LiteralPath ' + psQuote(p) + ' -Recurse -Force',
+  },
+  bash: {
+    file: (p) => 'rm -f ' + shQuote(toPosix(p)),
+    dir: (p) => 'rm -rf ' + shQuote(toPosix(p)),
+  },
+  cmd: {
+    file: (p) => 'del /f /q "' + p + '"',
+    dir: (p) => 'rmdir /s /q "' + p + '"',
+  },
+};
+
+/** 把一条命令拆到多行？不用。直接一行一条，注释用各 shell 的写法 */
+function commentText(shell, text) {
+  if (shell === 'cmd') return 'REM ' + text;
+  return '# ' + text;
+}
+
+/** 一个会话的删除命令主体，不含首尾说明 —— 批量时按会话拼多段 */
+function commandForSession(sess, shell, withExtras) {
+  const S = SHELLS[shell];
+  const lines = [];
+
+  lines.push(commentText(shell, '会话：' + sess.title));
+  lines.push(commentText(shell, 'ID：' + sess.id));
+  lines.push('');
+  lines.push(S.file(sess.paths.transcript));
+
+  if (withExtras) {
+    const picked = Object.keys(EXTRA_LABEL).filter((k) => sess.extras && sess.extras[k]);
+    if (picked.length) {
+      lines.push('');
+      lines.push(commentText(shell, '这个会话在磁盘上散落的其它数据：'));
+      for (const k of picked) {
+        lines.push(commentText(shell, '  ' + EXTRA_LABEL[k]));
+        lines.push(S.dir(sess.paths[k]));
+      }
+    }
+  }
+  return lines.join('\n');
+}
+
+/** 一条会话一段、逐段列出来。刻意不用 forEach/数组一次删 —— 逐条摆开，
+ *  执行前还能一行行核对，哪条不对删掉哪条就行。 */
+function buildCommand(sessions, shell, withExtras) {
+  const lines = [];
+
+  if (sessions.length > 1) {
+    lines.push(commentText(shell, '共 ' + sessions.length + ' 个会话，逐个删除'));
+    lines.push('');
+  }
+
+  sessions.forEach((s, i) => {
+    if (i) lines.push('');
+    lines.push(commandForSession(s, shell, withExtras));
+  });
+
+  lines.push('');
+  lines.push(commentText(shell, sessions.length === 1
+    ? '执行后，这个会话就会从 claude --resume 的列表里消失'
+    : '执行后，这 ' + sessions.length + ' 个会话就会从 claude --resume 的列表里消失'));
+  return lines.join('\n');
+}
+
+// ---------------------------------------------------------------- 数据与渲染
+
+let DATA = null;
+let query = '';
+let currentSessions = null;   // 弹窗里正在展示的那批会话
+let shell = 'powershell';
+
+// 各种状态一律用 session id 和 cwd 记录，**不用数组下标**。
+// 下标在过滤和重新渲染之后会错位 —— 上次「点 A 会话却生成 B 的命令」就是
+// uid 递增两次导致的，那次真按下去是会删错文件的。
+const openSessions = new Set();   // 展开了对话的会话
+const fullSessions = new Set();   // 其中切到「完整对话」的（默认只看自己说的）
+const selected = new Set();       // 勾选了的会话（批量删除用）
+const fullData = new Map();       // sid -> {turns} | {error}，点开完整对话才去读
+const fullLoading = new Set();    // 正在读的，避免连点重复请求
+let collapsedWs = new Set();      // 折叠着的工作区
+let seenWs = new Set();           // 见过的 key，用来判断新出现的
+const byId = new Map();           // sessionId -> 会话对象
+
+const listEl = document.getElementById('list');
+const statsEl = document.getElementById('stats');
+
+/** 首次加载把全部工作区都塞进 collapsedWs —— 这就是「默认全部折叠」 */
+function initCollapseState() {
+  for (const w of DATA.workspaces) {
+    if (!seenWs.has(w.key)) {
+      collapsedWs.add(w.key);
+      seenWs.add(w.key);
+    }
+  }
+  byId.clear();
+  for (const w of DATA.workspaces) {
+    for (const s of w.sessions) byId.set(s.id, s);
+  }
+  // 勾选集合里可能留着已经不存在的会话（手动删掉了、或过了清理期），顺手剔除
+  for (const sid of [...selected]) {
+    if (!byId.has(sid)) selected.delete(sid);
+  }
+}
+
+function matches(sess, ws) {
+  if (!query) return true;
+  const q = query.toLowerCase();
+  if (String(sess.title).toLowerCase().includes(q)) return true;
+  if (String(ws.cwd).toLowerCase().includes(q)) return true;
+  if (String(sess.id).toLowerCase().includes(q)) return true;
+  return sess.turns.some((t) => String(t.text).toLowerCase().includes(q));
+}
+
+function renderTurns(turns, emptyHint) {
+  if (!turns.length) return '<div class="turns"><div class="turn"><span class="who"></span><span class="txt" style="color:var(--muted)">（' + esc(emptyHint || '没有可展示的文本对话') + '）</span></div></div>';
+  return '<div class="turns">' + turns.map((t) => (
+    '<div class="turn turn-' + esc(t.role) + '">' +
+      '<span class="who">' + (t.role === 'user' ? '你' : 'Claude') + '</span>' +
+      '<span class="txt">' + esc(t.text) + '</span>' +
+    '</div>'
+  )).join('') + '</div>';
+}
+
+// 一行一个会话：标题 / 大小 / 时间 / 删除命令。点这一行原地展开它的最近对话。
+function renderSession(sess) {
+  const open = openSessions.has(sess.id);
+  const full = fullSessions.has(sess.id);
+  const picked = selected.has(sess.id);
+
+  // 「手动命名」这类标记放展开区 —— 很多 folder 里每个会话都是手动命名的，
+  // 摆在行里就是一行行重复同样三个字，纯噪音。
+  const tags = (sess.titleIsCustom ? ['手动命名'] : [])
+    .concat(['subagents', 'fileHistory', 'tasks', 'sessionEnv']
+      .filter((k) => sess.extras && sess.extras[k])
+      .map((k) => EXTRA_LABEL[k]))
+    .map((label) => '<span class="tag">' + esc(label) + '</span>')
+    .join('');
+
+  const head =
+    '<div class="sess-head" data-toggle-sess>' +
+      '<input type="checkbox" class="pick" data-pick' + (picked ? ' checked' : '') + '>' +
+      '<span class="sess-title">' +
+        '<span class="name">' + esc(sess.title) + '</span>' +
+      '</span>' +
+      '<span class="sess-size">' + fmtSize(sess.bytes) + '</span>' +
+      '<span class="sess-when" title="' + esc(fmtAgo(sess.updatedAt)) + '">' +
+        esc(fmtStamp(sess.updatedAt)) + '</span>' +
+      '<button class="btn-del" data-del>删除命令</button>' +
+    '</div>';
+
+  // 展开一行的第一眼只看「我最近说的」—— 判断一个会话在干什么，看自己说过
+  // 什么远比看 Claude 那些又长又碎的回复管用。完整对话要再点一下，而且是
+  // 那一下才真去后端读（最近 100 条），读回来缓存住，来回切不再重复读。
+  let label;
+  let content;
+  if (!full) {
+    label = '我最近说的';
+    content = renderTurns(sess.recentUser, '这个会话里没有你说的文本消息');
+  } else {
+    const loaded = fullData.get(sess.id);
+    if (!loaded) {
+      label = '完整对话 · 读取中…';
+      content = renderTurns([], '正在读取…');
+    } else if (loaded.error) {
+      label = '完整对话 · 读取失败';
+      content = '<div class="turns"><div class="turn"><span class="txt" style="color:var(--danger)">' +
+                esc(loaded.error) + '</span></div></div>';
+    } else {
+      label = '完整对话 · 最近 ' + loaded.turns.length + ' 条';
+      content = renderTurns(loaded.turns, '这个会话没有可展示的文本对话');
+    }
+  }
+
+  const body = open
+    ? '<div class="sess-turns">' +
+        '<div class="tags"><span class="lbl">' + label + '</span>' + tags + '</div>' +
+        content +
+        '<button class="btn-more" data-more>' + (full ? '只看我说的' : '展开完整对话') + '</button>' +
+      '</div>'
+    : '';
+
+  return '<div class="sess' + (open ? ' open' : '') + (picked ? ' picked' : '') +
+         '" data-sid="' + esc(sess.id) + '">' + head + body + '</div>';
+}
+
+function renderList() {
+  const searching = !!query.trim();
+
+  const wsList = DATA.workspaces
+    .map((ws) => ({ ws, sessions: ws.sessions.filter((s) => matches(s, ws)) }))
+    .filter((x) => x.sessions.length);
+
+  if (!wsList.length) {
+    listEl.innerHTML = '<div class="empty">没有匹配的会话</div>';
+    return;
+  }
+
+  const html = wsList.map(({ ws, sessions }) => {
+    // 搜索时无视折叠状态强制展开 —— 否则搜到了却藏在收起来的工作区里，看不见
+    const collapsed = !searching && collapsedWs.has(ws.key);
+
+    return '' +
+      '<section class="ws' + (collapsed ? ' collapsed' : '') + '" data-ws="' + esc(ws.key) + '">' +
+        '<div class="ws-head" data-toggle>' +
+          '<input type="checkbox" class="pick" data-pick-ws title="选中这个工作区下的全部会话">' +
+          '<span class="caret">▼</span>' +
+          '<span class="ws-path">' + esc(ws.cwd) + '</span>' +
+          '<span class="ws-meta">' +
+            (ws.hasMemory ? '<span class="tag mem" title="这是项目级记忆，不会被会话删除命令波及">memory</span>' : '') +
+            '<span>' + sessions.length + ' 个会话</span>' +
+            '<span>' + fmtSize(ws.bytes) + '</span>' +
+            '<span>' + esc(fmtTime(ws.updatedAt)) + '</span>' +
+          '</span>' +
+        '</div>' +
+        '<div class="ws-body">' + sessions.map(renderSession).join('') + '</div>' +
+      '</section>';
+  }).join('');
+
+  listEl.innerHTML = html;
+  syncWsCheckboxes();
+}
+
+/** 工作区那个勾选框要反映组内情况：全选 / 半选（indeterminate）/ 未选。
+ *  indeterminate 没法用 HTML 属性写出来，只能渲染完再用 JS 补上。 */
+function syncWsCheckboxes() {
+  for (const el of listEl.querySelectorAll('.ws')) {
+    const box = el.querySelector('[data-pick-ws]');
+    if (!box) continue;
+    const all = [...el.querySelectorAll('.sess [data-pick]')];
+    if (!all.length) continue;
+    const n = all.filter((b) => b.checked).length;
+    box.checked = n === all.length;
+    box.indeterminate = n > 0 && n < all.length;
+  }
+}
+
+// ---------------------------------------------------------------- 弹窗
+
+const modal = document.getElementById('modal');
+const mTitle = document.getElementById('m-title');
+const mSid = document.getElementById('m-sid');
+const mCmd = document.getElementById('m-cmd');
+const mNote = document.getElementById('m-note');
+const withExtrasEl = document.getElementById('with-extras');
+
+function refreshModal() {
+  if (!currentSessions || !currentSessions.length) return;
+  const many = currentSessions.length > 1;
+  mCmd.textContent = buildCommand(currentSessions, shell, withExtrasEl.checked);
+
+  const parts = [];
+  if (many) {
+    const bytes = currentSessions.reduce((n, s) => n + s.bytes, 0);
+    const withHistory = currentSessions.filter((s) => s.extras && s.extras.fileHistory).length;
+    parts.push('一次删掉 <b>' + currentSessions.length + '</b> 个会话，合计 <b>' + fmtSize(bytes) + '</b>。' +
+               '每个会话单独一段，执行前可以逐段核对 —— 不想删的那几行直接删掉即可。');
+    if (withHistory) {
+      parts.push('其中 ' + withHistory + ' 个带<b>文件编辑历史</b>；删掉后它们的文件回滚记录就没了，' +
+                 '如果最近还用得到回退功能，取消上面的勾选。');
+    }
+  } else {
+    const s = currentSessions[0];
+    parts.push('这条命令只作用于上面的这一个会话。执行后它就会从 <b>claude --resume</b> 的列表里消失。');
+    if (s.extras && s.extras.subagents) {
+      parts.push('同名的子 agent 目录里存着这个会话的 subagent 记录和 tool 结果，删掉主文件后它就成了孤儿，建议一并清理。');
+    }
+    if (s.extras && s.extras.fileHistory) {
+      parts.push('<b>文件编辑历史</b>删除后，这个会话里做过的文件回滚记录就没了 —— 如果最近还用得到回退功能，可以取消勾选。');
+    }
+  }
+  parts.push('项目目录下的 <b>memory/</b> 是项目级记忆，不属于任何单个会话，这条命令不会碰它。');
+  mNote.innerHTML = parts.map((p) => '· ' + p).join('<br>');
+}
+
+function openModal(sessions) {
+  currentSessions = sessions;
+  if (sessions.length === 1) {
+    mTitle.textContent = sessions[0].title;
+    mSid.textContent = sessions[0].id;
+  } else {
+    mTitle.textContent = '批量删除 ' + sessions.length + ' 个会话';
+    const ids = sessions.slice(0, 3).map((s) => s.id.slice(0, 8)).join(' · ');
+    mSid.textContent = sessions.length <= 3 ? ids : ids + ' … 等 ' + sessions.length + ' 个';
+  }
+  withExtrasEl.checked = true;
+  refreshModal();
+  modal.showModal();
+}
+
+document.getElementById('seg').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-shell]');
+  if (!btn) return;
+  shell = btn.dataset.shell;
+  [...e.currentTarget.children].forEach((b) => b.classList.toggle('on', b === btn));
+  refreshModal();
+});
+
+withExtrasEl.addEventListener('change', refreshModal);
+
+document.getElementById('m-copy').addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  try {
+    await navigator.clipboard.writeText(mCmd.textContent);
+    btn.textContent = '已复制 ✓';
+  } catch {
+    // 剪贴板不可用时退化成手选
+    const r = document.createRange();
+    r.selectNodeContents(mCmd);
+    const sel = getSelection();
+    sel.removeAllRanges();
+    sel.addRange(r);
+    btn.textContent = '请按 Ctrl+C';
+  }
+  setTimeout(() => { btn.textContent = '复制命令'; }, 1800);
+});
+
+modal.addEventListener('click', (e) => {
+  if (e.target.hasAttribute('data-close') || e.target === modal) modal.close();
+});
+
+// ---------------------------------------------------------------- 事件绑定
+
+listEl.addEventListener('click', (e) => {
+  // 顺序要紧：勾选框和删除按钮都在行里面，必须先判它们，
+  // 否则点它们会连带把整行展开
+  const pick = e.target.closest('[data-pick]');
+  if (pick) {
+    const row = pick.closest('.sess');
+    const sid = row.dataset.sid;
+    if (pick.checked) selected.add(sid);
+    else selected.delete(sid);
+    row.classList.toggle('picked', pick.checked);
+    syncWsCheckboxes();
+    updateBatchBar();
+    return;
+  }
+
+  const pickWs = e.target.closest('[data-pick-ws]');
+  if (pickWs) {
+    const ids = [...pickWs.closest('.ws').querySelectorAll('.sess')].map((el) => el.dataset.sid);
+    for (const sid of ids) {
+      if (pickWs.checked) selected.add(sid);
+      else selected.delete(sid);
+    }
+    renderList();          // 组内每一行的勾选状态要跟着变
+    updateBatchBar();
+    return;
+  }
+
+  const del = e.target.closest('[data-del]');
+  if (del) {
+    const sess = byId.get(del.closest('.sess').dataset.sid);
+    if (sess) openModal([sess]);
+    return;
+  }
+
+  // 「我最近说的」↔「完整对话」的切换
+  const more = e.target.closest('[data-more]');
+  if (more) {
+    const sid = more.closest('.sess').dataset.sid;
+    if (fullSessions.has(sid)) {
+      fullSessions.delete(sid);                 // 切回去，已读到的先留着
+    } else {
+      fullSessions.add(sid);
+      if (!fullData.has(sid)) loadFull(sid);    // 第一次点才真去读
+    }
+    renderList();
+    return;
+  }
+
+  const sessHead = e.target.closest('[data-toggle-sess]');
+  if (sessHead) {
+    const sid = sessHead.closest('.sess').dataset.sid;
+    if (openSessions.has(sid)) openSessions.delete(sid);
+    else openSessions.add(sid);
+    renderList();
+    return;
+  }
+
+  // [data-toggle] 是精确属性名，不会误匹配到 data-toggle-sess
+  const wsHead = e.target.closest('[data-toggle]');
+  if (wsHead) {
+    const key = wsHead.closest('.ws').dataset.ws;
+    if (collapsedWs.has(key)) collapsedWs.delete(key);
+    else collapsedWs.add(key);
+    renderList();
+  }
+});
+
+let searchTimer = null;
+document.getElementById('search').addEventListener('input', (e) => {
+  clearTimeout(searchTimer);
+  const v = e.target.value;
+  searchTimer = setTimeout(() => {
+    query = v;
+    renderList();
+  }, 120);
+});
+
+// 全部折叠：工作区连同展开的会话一起收起来
+document.getElementById('collapse-all').addEventListener('click', () => {
+  for (const w of DATA.workspaces) collapsedWs.add(w.key);
+  openSessions.clear();
+  renderList();
+});
+
+// ---- 批量选择 ----
+// 选中集合跨工作区保留（折叠起来也还在），所以顶栏/底部条显示的是总数。
+
+const batchbar = document.getElementById('batchbar');
+const batchN = document.getElementById('batch-n');
+
+function updateBatchBar() {
+  batchN.textContent = selected.size;
+  batchbar.hidden = selected.size === 0;
+}
+
+document.getElementById('batch-cmd').addEventListener('click', () => {
+  // 按 DATA 的既有顺序取，而不是勾选先后 —— 命令里的排列要稳定可预期
+  const sessions = [];
+  for (const ws of DATA.workspaces) {
+    for (const s of ws.sessions) if (selected.has(s.id)) sessions.push(s);
+  }
+  if (sessions.length) openModal(sessions);
+});
+
+document.getElementById('batch-clear').addEventListener('click', () => {
+  selected.clear();
+  renderList();
+  updateBatchBar();
+});
+
+/** 点开完整对话时才去后端读这个会话的最近 100 条，读完缓存住，来回切不再重复读 */
+async function loadFull(sid) {
+  if (fullLoading.has(sid)) return;
+  fullLoading.add(sid);
+  try {
+    const res = await fetch('/api/session-turns?id=' + encodeURIComponent(sid));
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    fullData.set(sid, { turns: data.turns });
+  } catch (err) {
+    fullData.set(sid, { error: '读取失败：' + err.message });
+  } finally {
+    fullLoading.delete(sid);
+    renderList();
+  }
+}
+
+document.getElementById('refresh').addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  btn.textContent = '扫描中…';
+  await load(true);
+  btn.disabled = false;
+  btn.textContent = '重新扫描';
+});
+
+// ---------------------------------------------------------------- 启动
+
+async function load(force) {
+  try {
+    const res = await fetch('/api/sessions' + (force ? '?refresh=1' : ''));
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    DATA = data;
+    fullData.clear();          // 重新扫过了，之前读到的对话重新拉
+    initCollapseState();
+
+    statsEl.innerHTML =
+      '<b>' + data.totals.workspaces + '</b> 个工作区 · ' +
+      '<b>' + data.totals.sessions + '</b> 个会话 · ' +
+      '<b>' + fmtSize(data.totals.bytes) + '</b>';
+    renderList();
+    updateBatchBar();
+  } catch (err) {
+    statsEl.textContent = '扫描失败';
+    listEl.innerHTML = '<div class="empty">读取失败：' + esc(err.message) + '</div>';
+  }
+}
+
+load(false);
+</script>
+</body>
+</html>

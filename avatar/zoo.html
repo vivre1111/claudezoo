@@ -1,0 +1,1068 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ClaudeZoo</title>
+<style>
+:root{
+  --bg:#0e1116; --bg2:#141922; --card:#171d27; --line:#252c39;
+  --ink:#e8edf5; --dim:#8d99ad; --faint:#5a6577;
+  --good:#4ade80; --warn:#fbbf24; --cold:#60a5fa; --dead:#f87171;
+}
+@media (prefers-color-scheme:light){
+  :root{ --bg:#f2f4f8; --bg2:#e8ecf3; --card:#fff; --line:#dfe4ed;
+         --ink:#1a1f2b; --dim:#5f6b7f; --faint:#98a2b3; }
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+/* 整个页面就是那块小部件：圆角、玻璃、竖直排布 */
+body{
+  color:var(--ink);
+  font:15px/1.55 system-ui,"Segoe UI","Microsoft YaHei",sans-serif;
+  -webkit-font-smoothing:antialiased;
+  display:flex;flex-direction:column;overflow:hidden;
+  border-radius:20px;
+  border:1px solid color-mix(in srgb,var(--line) 60%,transparent);
+  background:
+    radial-gradient(700px 400px at 12% -8%, color-mix(in srgb,var(--cold) 16%,transparent), transparent 60%),
+    radial-gradient(600px 360px at 92% 112%, color-mix(in srgb,#a78bfa 16%,transparent), transparent 60%),
+    color-mix(in srgb,var(--bg) 92%,transparent);
+}
+/* 淡淡的高科技网格底纹 */
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:-1;
+  background-image:
+    linear-gradient(color-mix(in srgb,var(--ink) 5%,transparent) 1px,transparent 1px),
+    linear-gradient(90deg,color-mix(in srgb,var(--ink) 5%,transparent) 1px,transparent 1px);
+  background-size:30px 30px;
+  mask-image:radial-gradient(circle at 50% 35%,#000 25%,transparent 80%)}
+
+/* ---------- 标题栏（iPhone widget 风） ---------- */
+#bar{display:flex;align-items:center;gap:10px;flex:none;
+  padding:11px 12px 11px 15px;
+  border-bottom:1px solid color-mix(in srgb,var(--line) 55%,transparent);
+  background:color-mix(in srgb,var(--card) 30%,transparent);
+  -webkit-app-region:drag;user-select:none}
+.brand{display:flex;align-items:center;gap:7px;font-weight:750;letter-spacing:.3px}
+.paw{font-size:17px;line-height:1;filter:drop-shadow(0 0 6px color-mix(in srgb,var(--cold) 60%,transparent))}
+.wordmark{font-size:15.5px;
+  background:linear-gradient(92deg,var(--cold),#a78bfa 70%);
+  -webkit-background-clip:text;background-clip:text;color:transparent}
+.count{display:flex;align-items:center;gap:6px;color:var(--dim);font-size:12.5px;
+  font-variant-numeric:tabular-nums}
+.pulse{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--good);
+  box-shadow:0 0 0 0 color-mix(in srgb,var(--good) 70%,transparent);animation:ping 2s ease-out infinite}
+@keyframes ping{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--good) 60%,transparent)}
+  70%{box-shadow:0 0 0 7px transparent}100%{box-shadow:0 0 0 0 transparent}}
+.ctrls{margin-left:auto;display:flex;gap:4px;-webkit-app-region:no-drag}
+.wb{width:26px;height:26px;display:grid;place-items:center;cursor:pointer;
+  font:13px system-ui;color:var(--dim);line-height:1;
+  background:transparent;border:1px solid transparent;border-radius:8px;
+  transition:background .15s,color .15s,border-color .15s}
+.wb:hover{background:color-mix(in srgb,var(--ink) 12%,transparent);color:var(--ink)}
+#close:hover{background:var(--dead);color:#fff;border-color:transparent}
+.wb:active{transform:scale(.9)}
+
+/* ---------- 卡片区：竖直滚动列表 ---------- */
+#zoo{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;
+  display:flex;flex-direction:column;gap:10px;padding:11px}
+#zoo::-webkit-scrollbar{width:8px}
+#zoo::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--ink) 18%,transparent);border-radius:8px}
+#zoo::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb,var(--ink) 30%,transparent)}
+#zoo::-webkit-scrollbar-track{background:transparent}
+body.mini #zoo,body.mini #keeper{display:none}
+body.mini{border-radius:16px}
+.pen{
+  --hue:210;
+  position:relative;border:1px solid color-mix(in srgb,var(--line) 65%,transparent);
+  border-radius:20px;padding:16px 18px;
+  background:color-mix(in srgb,var(--card) 62%,transparent);
+  backdrop-filter:blur(16px) saturate(1.35);
+  -webkit-backdrop-filter:blur(16px) saturate(1.35);
+  box-shadow:0 14px 40px -22px #000d, inset 0 1px 0 0 color-mix(in srgb,#fff 8%,transparent);
+  transition:transform .3s cubic-bezier(.2,.7,.3,1),box-shadow .3s,border-color .3s,background .3s;
+  animation:pop .45s cubic-bezier(.34,1.56,.64,1) both;
+}
+@keyframes pop{from{opacity:0;transform:translateY(14px) scale(.96)}to{opacity:1;transform:none}}
+.pen.leaving{animation:bye .3s ease-in forwards}
+@keyframes bye{to{opacity:0;transform:scale(.92);filter:blur(3px)}}
+.pen::before{content:"";position:absolute;inset:0 0 auto;height:2px;border-radius:20px 20px 0 0;
+  background:linear-gradient(90deg,transparent,hsl(var(--hue) 90% 62%),hsl(calc(var(--hue) + 50) 90% 64%),transparent);
+  opacity:.7}
+.pen::after{ /* 刚有动静时的一圈冷光扫过 */
+  content:"";position:absolute;inset:-1px;border-radius:20px;pointer-events:none;
+  box-shadow:inset 0 0 40px -6px hsl(var(--hue) 95% 62%),0 0 24px -4px hsl(var(--hue) 90% 58%);
+  opacity:0;transition:opacity .6s}
+.pen.fresh::after{opacity:.85;transition:opacity .1s}
+.pen:hover,.pen:focus-within{
+  transform:translateY(-3px);
+  background:color-mix(in srgb,var(--card) 82%,transparent);
+  border-color:hsl(var(--hue) 75% 62% / .5);
+  box-shadow:0 22px 60px -24px #000e,
+             0 0 0 1px hsl(var(--hue) 75% 60% / .22),
+             0 0 34px -8px hsl(var(--hue) 85% 55% / .4);
+  z-index:5;
+}
+
+.top{display:flex;gap:14px;align-items:center}
+.who{min-width:0;flex:1}
+.nm{font-weight:650;font-size:18px;display:flex;align-items:center;gap:8px;min-width:0}
+.nm .j-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tag.cn{font-family:ui-monospace,Consolas,monospace;font-size:11px;opacity:.75}
+.dot{width:9px;height:9px;border-radius:50%;flex:none;transition:box-shadow .3s}
+.folder{color:var(--dim);font-size:13px;margin-top:2px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:rtl;text-align:left}
+.tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.tag{font-size:11.5px;padding:3px 9px;border-radius:20px;
+  background:color-mix(in srgb,var(--bg2) 70%,transparent);
+  color:var(--dim);border:1px solid color-mix(in srgb,var(--line) 70%,transparent);white-space:nowrap}
+.tag.br::before{content:"⑂ "}
+.tag.hp{color:hsl(var(--hue) 70% 62%);border-color:currentColor}
+
+/* 常驻一行：表情 + 在干嘛 + 时间。收起时也看得见。 */
+.mini{display:flex;align-items:center;gap:8px;margin-top:5px;font-size:14.5px;font-weight:600}
+.mini .e{font-size:17px;line-height:1;flex:none}
+.mini .j-verb{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* hover 才展开的详情。用 max-height 动画，稳，不挑浏览器 */
+.detail{max-height:0;opacity:0;overflow:hidden;margin-top:0;
+  transition:max-height .4s cubic-bezier(.2,.7,.3,1),opacity .3s ease,margin-top .4s}
+.detail>.dwrap{min-height:0}
+.pen:hover .detail,.pen:focus-within .detail{max-height:640px;opacity:1;margin-top:13px}
+/* 「悬停展开」那行小字原来蹲在右上角，现在那儿被 📁/🌐 按钮占了，会打架。
+   卡片本来就一眼看得出能悬停，这提示留着弊大于利，直接不显示。 */
+.hoverhint{display:none}
+
+/* ---------- 当前动作详情 ---------- */
+.doing{background:color-mix(in srgb,var(--bg2) 60%,transparent);border-radius:14px;padding:12px 14px;
+  border:1px solid color-mix(in srgb,var(--line) 60%,transparent)}
+.hint{font:13px/1.55 ui-monospace,"Cascadia Code",Consolas,monospace;
+  color:var(--dim);word-break:break-all;
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.say{margin-top:12px;font-size:14px;color:var(--dim);position:relative;padding-left:14px;
+  display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden}
+.say::before{content:"";position:absolute;left:0;top:3px;bottom:3px;width:2px;border-radius:2px;
+  background:hsl(var(--hue) 70% 60%);opacity:.55}
+
+/* 时间戳：动作行靠右，台词行做前缀 */
+.t{margin-left:auto;flex:none;font:12px/1 ui-monospace,Consolas,monospace;
+  color:var(--faint);font-variant-numeric:tabular-nums;font-weight:400}
+.t b{color:var(--dim);font-weight:600}
+.stamp{font:11.5px/1 ui-monospace,Consolas,monospace;color:var(--faint);
+  background:var(--card);border:1px solid var(--line);border-radius:5px;
+  padding:2px 5px;margin-right:7px;white-space:nowrap}
+
+/* ---------- 底部仪表 ---------- */
+.meters{display:flex;gap:12px;align-items:center;margin-top:12px}
+.ctx{flex:1;min-width:0}
+.ctx .lb{display:flex;justify-content:space-between;font-size:10.5px;color:var(--faint);
+  margin-bottom:4px;font-variant-numeric:tabular-nums}
+.bar{height:5px;border-radius:5px;background:var(--bg2);overflow:hidden}
+.fill{height:100%;border-radius:5px;width:0;
+  background:linear-gradient(90deg,hsl(var(--hue) 80% 58%),hsl(calc(var(--hue) + 50) 80% 62%));
+  transition:width .7s cubic-bezier(.2,.7,.3,1)}
+.beats{display:flex;gap:2px;align-items:flex-end;height:22px;flex:none}
+.beats i{width:4px;border-radius:2px;background:hsl(var(--hue) 60% 55%);opacity:.75;
+  transition:height .5s ease;min-height:2px}
+
+/* ---------- 生物 ---------- */
+.pet{width:124px;height:124px;flex:none;overflow:visible}
+.body{fill:hsl(var(--hue) 62% 58%)}
+.arm rect{fill:hsl(var(--hue) 62% 52%)}
+.shadow{fill:#000;opacity:.16}
+.antenna{stroke:hsl(var(--hue) 50% 46%);stroke-width:3;stroke-linecap:round}
+.bulb{fill:hsl(calc(var(--hue) + 45) 90% 66%)}
+/* Cursor 的小怪物顶个鼠标指针，Claude 的顶个灯泡天线 */
+.tip{fill:hsl(calc(var(--hue) + 45) 90% 66%);stroke:hsl(var(--hue) 50% 40%);
+  stroke-width:1.6;stroke-linejoin:round;display:none}
+[data-k=cursor] .bulb{display:none}
+[data-k=cursor] .tip{display:block}
+[data-k=cursor] .antenna{y1:34;y2:22}
+[data-k=cursor] .body{rx:0}
+.tag.app{font-weight:600;color:hsl(var(--hue) 60% 52%);
+  border-color:color-mix(in srgb,hsl(var(--hue) 60% 52%) 45%,transparent)}
+@media (prefers-color-scheme:dark){.tag.app{color:hsl(var(--hue) 70% 68%)}}
+.white{fill:#fff}.pupil{fill:#1a1f2b}
+.lid,.mouth{fill:none;stroke:#1a1f2b;stroke-width:3.4;stroke-linecap:round}
+.lid{opacity:0}
+.sparks,.zzz,.sweat,.think{opacity:0}
+.sparks circle{fill:hsl(calc(var(--hue) + 50) 95% 68%)}
+.zzz text{fill:var(--dim);font:700 15px system-ui}
+.sweat{fill:#67c9f5}
+.think circle{fill:var(--card);stroke:var(--line);stroke-width:2}
+.think .d{fill:hsl(var(--hue) 70% 62%);stroke:none}
+/* 等小弟回来时天线发的雷达波，平时藏着 */
+.radar{opacity:0}
+.radar circle{fill:none;stroke:hsl(calc(var(--hue) + 45) 90% 66%);stroke-width:2.2;
+  transform-box:fill-box;transform-origin:center}
+/* 拍一拍用到的零件，平时全藏着 */
+.spikes,.blush,.hearts,.stars,.bang,.drops{opacity:0}
+.spikes{fill:hsl(var(--hue) 62% 50%);transform-box:fill-box;transform-origin:center}
+.blush ellipse{fill:#ff7a90;opacity:.6}
+.hearts path{fill:#ff6b8a}
+.stars path{fill:hsl(46 96% 62%)}
+.stars .orb{transform-box:view-box;transform-origin:60px 20px}
+.bang{fill:hsl(var(--hue) 88% 60%);font:800 30px system-ui;text-anchor:middle}
+.drops ellipse{fill:#8ed8ff}
+.pupil{transition:transform .28s ease}
+
+.rig{transform-box:fill-box;transform-origin:center bottom;animation:breathe 3.4s ease-in-out infinite}
+@keyframes breathe{0%,100%{transform:scaleY(1) scaleX(1)}50%{transform:scaleY(.975) scaleX(1.025)}}
+.eye{transform-box:fill-box;transform-origin:center;animation:blink 5.5s infinite}
+@keyframes blink{0%,95%,100%{transform:scaleY(1)}97%{transform:scaleY(.08)}}
+
+/* 干活：上下颠 + 右手抡锤 + 火星子 */
+[data-s=working] .rig{animation:bob .42s ease-in-out infinite alternate}
+@keyframes bob{from{transform:translateY(0) rotate(-1.5deg)}to{transform:translateY(-5px) rotate(1.5deg)}}
+[data-s=working] .arm-r{transform-box:fill-box;transform-origin:left center;
+  animation:hammer .36s ease-in-out infinite}
+@keyframes hammer{0%,100%{transform:rotate(-38deg)}50%{transform:rotate(18deg)}}
+[data-s=working] .sparks{opacity:1}
+[data-s=working] .sparks circle{animation:spark .8s ease-out infinite}
+[data-s=working] .sparks circle:nth-child(2){animation-delay:.26s}
+[data-s=working] .sparks circle:nth-child(3){animation-delay:.52s}
+@keyframes spark{0%{transform:translate(0,0) scale(1);opacity:1}
+  100%{transform:translate(14px,-20px) scale(.2);opacity:0}}
+[data-s=working] .bulb,[data-s=working] .tip{animation:glow .5s ease-in-out infinite alternate}
+@keyframes glow{to{filter:drop-shadow(0 0 7px hsl(calc(var(--hue) + 45) 95% 65%))}}
+
+/* 思考：慢慢晃 + 眼珠上瞟 + 思考泡 */
+[data-s=thinking] .rig{animation:sway 2.6s ease-in-out infinite}
+@keyframes sway{0%,100%{transform:rotate(-2deg)}50%{transform:rotate(2deg)}}
+[data-s=thinking] .pupil{transform:translateY(-3.5px)}
+[data-s=thinking] .think{opacity:1}
+[data-s=thinking] .think .d{animation:dots 1.25s ease-in-out infinite}
+[data-s=thinking] .think .d:nth-child(5){animation-delay:.17s}
+[data-s=thinking] .think .d:nth-child(6){animation-delay:.34s}
+@keyframes dots{0%,100%{opacity:.22;transform:translateY(0)}45%{opacity:1;transform:translateY(-2.5px)}}
+
+/* 等你：睁大眼盯着你 + 招手 */
+[data-s=waiting] .arm-l{transform-box:fill-box;transform-origin:right center;
+  animation:wave .62s ease-in-out infinite}
+@keyframes wave{0%,100%{transform:rotate(6deg)}50%{transform:rotate(-42deg)}}
+[data-s=waiting] .rig{animation:hop 1.15s cubic-bezier(.3,0,.4,1) infinite}
+@keyframes hop{0%,72%,100%{transform:translateY(0)}82%{transform:translateY(-7px)}}
+[data-s=waiting] .white{r:11}
+
+/* 等小弟回来：跟上面的「等你」要长得完全不一样。
+   这里【故意不招手】——招手是冲你来的，会让人以为在叫自己过去，
+   但这会儿它等的是外面那几个小弟，压根不需要你。
+   改成：原地慢慢转身张望 + 眼珠左右扫 + 天线一圈圈发雷达波，双手垂着不动。 */
+[data-s=awaiting] .rig{animation:scan 3.4s ease-in-out infinite}
+@keyframes scan{0%,100%{transform:rotate(-3.5deg)}50%{transform:rotate(3.5deg)}}
+[data-s=awaiting] .pupil{animation:look 3.4s ease-in-out infinite}
+@keyframes look{0%,100%{transform:translateX(-3px)}50%{transform:translateX(3px)}}
+[data-s=awaiting] .radar{opacity:1}
+[data-s=awaiting] .radar circle{animation:ping2 2.4s ease-out infinite}
+[data-s=awaiting] .radar circle:nth-child(2){animation-delay:.8s}
+[data-s=awaiting] .radar circle:nth-child(3){animation-delay:1.6s}
+@keyframes ping2{0%{opacity:.85;transform:scale(.2)}100%{opacity:0;transform:scale(1)}}
+[data-s=awaiting] .bulb{animation:glow 1.2s ease-in-out infinite alternate}
+
+/* 打盹：闭眼 + Zzz */
+[data-s=dozing] .eye,[data-s=quiet] .eye{opacity:0}
+[data-s=dozing] .lid,[data-s=quiet] .lid{opacity:1}
+[data-s=dozing] .mouth,[data-s=quiet] .mouth{d:path("M53 86 Q60 83 67 86")}
+[data-s=dozing] .rig{animation:breathe 5s ease-in-out infinite}
+[data-s=dozing] .zzz{opacity:1}
+[data-s=dozing] .zzz text{animation:float 2.6s ease-out infinite}
+[data-s=dozing] .zzz text:nth-child(2){animation-delay:.85s}
+[data-s=dozing] .zzz text:nth-child(3){animation-delay:1.7s}
+@keyframes float{0%{opacity:0;transform:translate(0,0) scale(.6)}
+  25%{opacity:.9}100%{opacity:0;transform:translate(13px,-26px) scale(1.15)}}
+[data-s=dozing] .body{filter:saturate(.45)}
+
+/* 卡住：不动 + 冷汗 */
+[data-s=stuck] .rig{animation:jitter 3.2s ease-in-out infinite}
+@keyframes jitter{0%,88%,100%{transform:none}92%{transform:translateX(-2px)}96%{transform:translateX(2px)}}
+[data-s=stuck] .sweat{opacity:1;animation:drip 2.1s ease-in infinite}
+@keyframes drip{0%{opacity:0;transform:translateY(0)}20%{opacity:1}100%{opacity:0;transform:translateY(20px)}}
+[data-s=stuck] .pupil{transform:translateY(2px) scale(.8)}
+[data-s=stuck] .mouth{d:path("M52 88 Q60 82 68 88")}
+
+/* ---------- 拍一拍：点一下小家伙，随机来个反应 ----------
+   反应类挂在卡片根节点上，`.pen.r-xxx .rig` 权重(0,2,1) 压过状态动画的
+   `[data-s=xxx] .rig`(0,1,1)，所以拍的时候反应盖过日常动作，1.4 秒后
+   类一摘就自动回到该干嘛干嘛。 */
+.pet{cursor:pointer;-webkit-tap-highlight-color:transparent}
+.pet:active{filter:brightness(1.06)}
+
+/* 蹭蹭：眯眼笑 + 欢快双跳 + 冒爱心 */
+.pen.r-happy .rig{animation:rHop .95s cubic-bezier(.3,1.5,.5,1)}
+@keyframes rHop{0%,100%{transform:none}
+  20%{transform:translateY(-11px) scale(1.04,.96)}
+  40%{transform:translateY(0) scale(.96,1.05)}
+  62%{transform:translateY(-7px) scale(1.03,.97)}
+  80%{transform:translateY(0) scale(.98,1.02)}}
+.pen.r-happy .eye{opacity:0}
+.pen.r-happy .lid{opacity:1}
+.pen.r-happy .mouth{d:path("M50 84 Q60 93 70 84")}
+.pen.r-happy .hearts{opacity:1}
+.pen.r-happy .hearts path{animation:rHeart 1s ease-out}
+.pen.r-happy .hearts g:nth-child(2) path{animation-delay:.14s}
+.pen.r-happy .hearts g:nth-child(3) path{animation-delay:.28s}
+@keyframes rHeart{0%{opacity:0;transform:translate(0,0) scale(.3)}
+  22%{opacity:1;transform:translate(1px,-8px) scale(1)}
+  100%{opacity:0;transform:translate(7px,-34px) scale(1.1)}}
+
+/* 炸毛：浑身尖刺炸开 + 高频抖 + 瞪圆眼 + 头顶感叹号 */
+.pen.r-puff .rig{animation:rShake .66s cubic-bezier(.36,.07,.19,.97)}
+@keyframes rShake{0%{transform:none}
+  12%{transform:scale(1.13)}
+  22%{transform:scale(1.1) translateX(-4px) rotate(-3.5deg)}
+  34%{transform:scale(1.1) translateX(4px) rotate(3.5deg)}
+  46%{transform:scale(1.07) translateX(-3px) rotate(-2deg)}
+  58%{transform:scale(1.05) translateX(3px) rotate(2deg)}
+  72%{transform:scale(1.03) translateX(-1.5px)}
+  100%{transform:none}}
+.pen.r-puff .spikes{opacity:1;animation:rSpike .72s ease-out}
+@keyframes rSpike{0%{opacity:0;transform:scale(.7)}
+  14%{opacity:1;transform:scale(1.07)}
+  55%{opacity:1;transform:scale(1)}
+  100%{opacity:0;transform:scale(.92)}}
+.pen.r-puff .white{r:12.5}
+.pen.r-puff .pupil{r:3}
+.pen.r-puff .mouth{d:path("M52 89 Q60 80 68 89")}
+.pen.r-puff .bang{opacity:1;animation:rBang .72s ease-out}
+@keyframes rBang{0%{opacity:0;transform:translateY(7px) scale(.4)}
+  20%{opacity:1;transform:translateY(0) scale(1.18)}
+  34%{transform:scale(1)}70%{opacity:1}100%{opacity:0}}
+
+/* 转晕：原地转一圈 + 头顶星星打转 */
+.pen.r-dizzy .rig{animation:rSpin 1.05s cubic-bezier(.5,0,.5,1)}
+@keyframes rSpin{to{transform:rotate(360deg)}}
+.pen.r-dizzy .stars{opacity:1;animation:rFade 1.2s ease-out}
+.pen.r-dizzy .stars .orb{animation:rOrbit 1.2s linear}
+@keyframes rOrbit{to{transform:rotate(360deg)}}
+
+/* 害羞：脸红 + 缩一下侧过身 + 眯眼 */
+.pen.r-shy .rig{animation:rShy 1.15s ease-out}
+@keyframes rShy{0%,100%{transform:none}
+  30%{transform:scale(.93) rotate(-6deg) translateY(3px)}
+  62%{transform:scale(.95) rotate(4deg)}}
+.pen.r-shy .blush{opacity:1;animation:rFade 1.3s ease-out}
+.pen.r-shy .eye{opacity:0}
+.pen.r-shy .lid{opacity:1}
+@keyframes rFade{0%{opacity:0}18%{opacity:1}72%{opacity:1}100%{opacity:0}}
+
+/* 打喷嚏：后仰蓄力 → 猛地前冲 + 喷出小水花 */
+.pen.r-sneeze .rig{animation:rSneeze .88s cubic-bezier(.3,1.4,.5,1)}
+@keyframes rSneeze{0%{transform:none}
+  36%{transform:rotate(-13deg) translateY(-3px)}
+  50%{transform:rotate(12deg) translateY(2px) scale(1.05,.95)}
+  68%{transform:rotate(-4deg)}100%{transform:none}}
+.pen.r-sneeze .drops{opacity:1}
+.pen.r-sneeze .drops ellipse{animation:rSpray .6s .44s ease-out both}
+.pen.r-sneeze .drops ellipse:nth-child(2){animation-delay:.5s}
+.pen.r-sneeze .drops ellipse:nth-child(3){animation-delay:.56s}
+@keyframes rSpray{0%{opacity:0;transform:translate(0,0) scale(.5)}
+  18%{opacity:.95}
+  100%{opacity:0;transform:translate(30px,11px) scale(1.2)}}
+.pen.r-sneeze .eye{opacity:0}
+.pen.r-sneeze .lid{opacity:1}
+
+/* 哼，不理你：扭头躲开 + 眼珠瞟向别处 */
+.pen.r-grumpy .rig{animation:rTurn 1.15s ease-in-out}
+@keyframes rTurn{0%,100%{transform:none}
+  26%{transform:translateX(-7px) rotate(-9deg)}
+  70%{transform:translateX(-5px) rotate(-7deg)}}
+.pen.r-grumpy .pupil{transform:translate(-4px,-3.5px)}
+.pen.r-grumpy .mouth{d:path("M52 88 Q60 83 68 87")}
+
+/* ---------- 饲养员播报（标题栏下面一条小字，跟着整体状态换话） ---------- */
+#keeper{flex:none;padding:2px 15px 8px;margin-top:-4px;
+  font-size:11px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  opacity:.85;transition:opacity .4s}
+
+/* ---------- 深夜片场：钉在最底部的海报卡，不是会话，纯装饰 ---------- */
+.poster{
+  --he:210;
+  /* 沉在 #zoo 底部不走：粘性定位，其它卡片在它「后面」滚，它自己焊在视口底边 */
+  position:sticky;bottom:0;z-index:4;
+  flex:none;border-radius:18px;overflow:hidden;
+  padding:16px 16px 14px;margin-top:2px;
+  color:#fff;
+  background:
+    radial-gradient(120% 90% at 50% -10%, hsl(var(--he) 70% 34% / .9), transparent 60%),
+    linear-gradient(165deg, hsl(var(--he) 55% 16%), hsl(calc(var(--he) + 30) 45% 9%) 75%);
+  box-shadow:0 -14px 30px -20px #000c, 0 16px 40px -22px #000d,
+             inset 0 1px 0 0 color-mix(in srgb,#fff 10%,transparent);
+  /* 入场动画不放这儿：CSS animation 绑在 class 上，每次因为排序被 appendChild
+     挪位置都会被浏览器当成"重新出场"又放一遍，看着像时不时闪一下。改成 JS 里
+     用 Web Animations API 只在真正创建时放一次，跟后面的位置挪动彻底脱钩。 */
+}
+.reel-row{display:flex;justify-content:space-between;margin-bottom:8px;opacity:.55}
+.reel-row i{width:6px;height:6px;border-radius:50%;background:#fff}
+.p-top{display:flex;align-items:center;gap:8px}
+.p-clap{font-size:20px;line-height:1;filter:drop-shadow(0 0 6px hsl(var(--he) 90% 65% / .7));
+  animation:flicker 4.5s ease-in-out infinite}
+@keyframes flicker{0%,88%,100%{opacity:1}90%{opacity:.55}92%{opacity:1}94%{opacity:.6}96%{opacity:1}}
+.p-title{font-weight:750;font-size:15.5px;letter-spacing:.3px}
+.p-en{font-size:10.5px;color:hsl(var(--he) 60% 78%);opacity:.75;margin-top:1px}
+.p-year{margin-left:auto;font:11px ui-monospace,Consolas,monospace;color:hsl(var(--he) 60% 78%);
+  opacity:.7;flex:none}
+/* 台词 + 小卡通人分两栏：文字占大头，卡通人蹲在右下角看电影 */
+.p-lower{display:flex;align-items:flex-end;gap:8px;margin-top:11px}
+.p-textcol{flex:1;min-width:0}
+.p-quote{font-size:12.5px;line-height:1.6;font-style:italic;
+  color:color-mix(in srgb,#fff 88%,transparent);position:relative;padding-left:13px}
+.p-quote::before{content:"“";position:absolute;left:-2px;top:-4px;font-size:22px;
+  font-style:normal;opacity:.4;color:hsl(var(--he) 80% 75%)}
+.p-meta{margin-top:12px;font-size:10px;color:hsl(var(--he) 40% 70%);opacity:.55;
+  display:flex;justify-content:space-between}
+.p-pal{width:50px;height:56px;flex:none;overflow:visible}
+.pp-body{fill:hsl(var(--he) 60% 66%)}
+.pp-bow{fill:#fff;opacity:.92}
+.pp-arm rect{fill:hsl(var(--he) 60% 57%)}
+.pp-cheek{fill:#ff9fb0;opacity:.5}
+.pp-eye{fill:#1a1f2b;transform-box:fill-box;transform-origin:center;animation:ppblink 4.6s ease-in-out infinite}
+.pp-eye.r{animation-delay:.12s}
+.pp-mouth{fill:none;stroke:#1a1f2b;stroke-width:2.3;stroke-linecap:round}
+.pp-shadow{fill:#000;opacity:.18}
+.pp-corn{font-size:15px}
+.pp-rig{transform-box:fill-box;transform-origin:center bottom;animation:ppsway 3.6s ease-in-out infinite}
+@keyframes ppsway{0%,100%{transform:rotate(-2.5deg)}50%{transform:rotate(2.5deg) translateY(-1.5px)}}
+@keyframes ppblink{0%,92%,100%{transform:scaleY(1)}95%{transform:scaleY(.15)}}
+
+/* ---------- 你的上一句话：常驻单独一行，省得忘了自己让它干嘛 ---------- */
+.ask{display:none;align-items:baseline;gap:7px;margin-top:9px;
+  font-size:12.5px;line-height:1.5;color:var(--dim);
+  padding:7px 10px;border-radius:10px;
+  background:color-mix(in srgb,var(--bg2) 55%,transparent);
+  border:1px solid color-mix(in srgb,var(--line) 50%,transparent)}
+/* 堂吉诃德骑马举长矛——代替原来那个「你」字标签 */
+.qx{flex:none;width:22px;height:19px;overflow:visible;align-self:center;
+  color:hsl(var(--hue) 65% 58%)}
+.qx .q{fill:currentColor}
+.qx .lance,.qx .leg,.qx .tail{stroke:currentColor;stroke-width:1.5;
+  stroke-linecap:round;fill:none}
+.qx .lance{stroke-width:1.3;opacity:.85}
+/* 卡片一有动静，这位就朝风车冲一下 */
+.pen.fresh .qx{animation:tilt .7s cubic-bezier(.3,1.4,.5,1)}
+@keyframes tilt{0%,100%{transform:none}35%{transform:translateX(2.5px) rotate(-5deg)}}
+/* 只留一行，太长就省略号——完整内容在 title 里，鼠标一悬就有 */
+.ask .j-ask{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+
+/* ---------- 固定的项目 ---------- */
+.pinbtns{position:absolute;top:9px;right:9px;display:none;gap:5px;z-index:6}
+.pb{width:27px;height:27px;display:grid;place-items:center;cursor:pointer;
+  font-size:14px;line-height:1;border:0;border-radius:9px;
+  background:color-mix(in srgb,var(--card) 80%,transparent);
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--line) 70%,transparent);
+  transition:transform .12s,background .15s,box-shadow .15s}
+.pb:hover{background:color-mix(in srgb,var(--ink) 14%,transparent);
+  box-shadow:inset 0 0 0 1px hsl(var(--hue) 70% 60% / .6)}
+.pb:active{transform:scale(.86)}
+.pen.pinned{border-color:hsl(var(--hue) 70% 60% / .5)}
+.pinmark{flex:none;font-size:12px;filter:drop-shadow(0 0 5px hsl(var(--hue) 90% 60% / .65))}
+
+.empty{text-align:center;color:var(--dim);padding:80px 20px;grid-column:1/-1}
+.empty .big{font-size:52px;margin-bottom:12px}
+footer{margin-top:26px;color:var(--faint);font-size:11.5px;text-align:center}
+.pen.hidden{display:none}
+
+/* 小部件天生窄，卡片一律用紧凑尺寸 */
+.pen{padding:12px 13px;border-radius:16px}
+.pet{width:66px;height:66px}
+.top{gap:11px}
+.nm{font-size:15px}
+.mini{font-size:13px;margin-top:3px}
+.mini .e{font-size:15px}
+.folder{font-size:12px}
+.tag{font-size:10.5px;padding:2px 7px}
+.doing{padding:10px 11px;border-radius:12px}
+.hint{font-size:11.5px;-webkit-line-clamp:3}
+.say{font-size:12.5px;-webkit-line-clamp:4}
+.t{font-size:11px}
+.empty{padding:40px 12px}
+
+/* ---- 放风模式 ----
+   你三分钟没碰键鼠，外壳会把窗口铺满整块屏，然后只留下泡泡那几个圆——
+   窗口区域（SetWindowRgn）把其余部分整个裁掉，那些地方既看不见也点不到。
+   所以泡泡必须是【实心不透明】的圆：裁剪是硬边，透明的地方会露出窗口底色。
+   圆的直径由外壳下发（--bub），跟它切区域用的半径是同一个数，改一处两边都跟着变。 */
+body.playtime{overflow:hidden}
+body.playtime #bar,body.playtime #keeper,body.playtime #zoo{display:none}
+#field{position:fixed;inset:0;z-index:99;pointer-events:none;contain:layout paint}
+/* --disc 是【画出来】的直径，比外壳切的区域大一整圈，多的部分永远被裁掉，
+   专门用来吃 run_js 的一帧延迟（详见 zoo_play.py 顶上的注释）。
+   所以这里不能有描边、不能有外投影——它们都长在被裁掉的那一圈上。
+   渐变的落点也要收在中间 55% 以内，不然看得见的部分是一片死平。 */
+.bub{position:absolute;left:0;top:0;width:var(--disc);height:var(--disc);
+  border-radius:50%;pointer-events:auto;cursor:pointer;display:grid;place-items:center;
+  will-change:transform;
+  /* 底色必须【完全不透明】：区域裁剪是硬边，透出去就露出窗口底色了。
+     从 --card 起手（深浅主题各有一套），再掺一点自己的色相。 */
+  background:radial-gradient(circle at 38% 30%,
+    color-mix(in srgb, hsl(var(--hue) 75% 62%) 17%, var(--card)),
+    color-mix(in srgb, hsl(var(--hue) 75% 40%) 34%, var(--card)) 55%)}
+.bub .pet{width:var(--petw);height:var(--petw);
+  /* 圆上不能描边，改让怪物自己带一点投影，脱离浅色底也看得清 */
+  filter:drop-shadow(0 1.5px 2px color-mix(in srgb, #000 38%, transparent))}
+.bub .shadow{display:none}          /* 泡泡是浮着的，地上那团影子没道理 */
+/* 出场是弹一下 —— 但只能弹 .pet，不能弹 .bub：泡泡的 transform 每帧都由
+   外壳写死（位置+歪头），动画一碰就会把它拽回原点。 */
+.bub.pop .pet{animation:bubPop .42s cubic-bezier(.34,1.56,.64,1)}
+@keyframes bubPop{from{transform:scale(.15);opacity:0}}
+/* 往回跑的时候鲜亮一点，看得出"收队了"。这里只能用 filter：描边会长在被裁掉的
+   那一圈上，根本看不见。 */
+body.playtime.homing .bub{filter:saturate(1.45) brightness(1.05)}
+
+@media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.05ms!important}}
+</style>
+</head>
+<body>
+
+<header id="bar">
+  <span class="brand"><span class="paw">🐾</span><span class="wordmark">ClaudeZoo</span></span>
+  <span class="count"><span class="pulse"></span><span id="tally"></span></span>
+  <span class="ctrls">
+    <button id="sessions" class="wb" title="会话管理">🗂</button>
+    <button id="fold" class="wb" title="折叠">▁</button>
+    <button id="close" class="wb" title="关闭">✕</button>
+  </span>
+</header>
+<div id="keeper"></div>
+
+<div id="zoo"></div>
+
+<script>
+const POLL = 15000;        // 数据每 15 秒拉一次，时间显示仍靠本地每秒自己走
+let serverOffset = 0;      // 后端时钟 - 本机时钟，毫秒
+let nextPollAt = 0;
+
+const PETS = new Map();
+const zoo = document.getElementById('zoo');
+
+const SVG = `
+<svg class="pet" viewBox="-8 -6 136 124">
+  <title>拍一拍</title>
+  <ellipse class="shadow" cx="60" cy="108" rx="33" ry="5"/>
+  <g class="rig">
+    <line class="antenna" x1="60" y1="30" x2="60" y2="15"/>
+    <g class="radar">
+      <circle cx="60" cy="11" r="15"/><circle cx="60" cy="11" r="15"/><circle cx="60" cy="11" r="15"/>
+    </g>
+    <circle class="bulb" cx="60" cy="11" r="5"/>
+    <path class="tip" d="M54 0 L54 19 L58.5 15 L61.5 21.5 L65 20 L62 13.5 L67.5 13 Z"/>
+    <g class="arm arm-l"><rect x="8" y="66" width="16" height="9" rx="4.5"/></g>
+    <g class="arm arm-r"><rect x="96" y="66" width="16" height="9" rx="4.5"/></g>
+    <g class="spikes"><path d="M60 12 L71.7 29.9 L91.7 22.3 L90.7 43.7 L111.4 49.3 L98 66 L111.4 82.7 L90.7 88.3 L91.7 109.7 L71.7 102.1 L60 120 L48.3 102.1 L28.3 109.7 L29.3 88.3 L8.6 82.7 L22 66 L8.6 49.3 L29.3 43.7 L28.3 22.3 L48.3 29.9 Z"/></g>
+    <path class="body" d="M60 27 C87 27 101 45 101 70 C101 93 85 105 60 105 C35 105 19 93 19 70 C19 45 33 27 60 27Z"/>
+    <g class="eye eye-l"><circle class="white" cx="47" cy="63" r="10"/><circle class="pupil" cx="47" cy="63" r="4.6"/></g>
+    <g class="eye eye-r"><circle class="white" cx="73" cy="63" r="10"/><circle class="pupil" cx="73" cy="63" r="4.6"/></g>
+    <path class="lid lid-l" d="M38 63 Q47 71 56 63"/>
+    <path class="lid lid-r" d="M64 63 Q73 71 82 63"/>
+    <g class="blush"><ellipse cx="35" cy="78" rx="8" ry="4.4"/><ellipse cx="85" cy="78" rx="8" ry="4.4"/></g>
+    <path class="mouth" d="M52 85 Q60 91 68 85"/>
+    <g class="sparks"><circle cx="106" cy="62" r="3"/><circle cx="106" cy="62" r="2.4"/><circle cx="106" cy="62" r="2"/></g>
+    <g class="zzz"><text x="92" y="34">z</text><text x="92" y="34">z</text><text x="92" y="34">z</text></g>
+    <path class="sweat" d="M96 34 q4 7 0 9 q-4 -2 0 -9Z"/>
+    <g class="think">
+      <circle cx="99" cy="46" r="4"/><circle cx="107" cy="34" r="6"/><circle cx="102" cy="18" r="12"/>
+      <circle class="d" cx="95" cy="18" r="2.3"/><circle class="d" cx="102" cy="18" r="2.3"/><circle class="d" cx="109" cy="18" r="2.3"/>
+    </g>
+  </g>
+  <!-- 拍一拍的特效层：故意放在 .rig 外面。转晕那下整个 .rig 要转 360°，
+       星星要是长在里面就会跟着多转一圈，看着乱。这几组各转各的。
+       每个特效外面都套了一层只做位移的分组：CSS 的 transform 会顶掉元素
+       自己的 transform 属性，套一层就能保住位置、只让动画动它该动的部分。 -->
+  <g class="hearts">
+    <g transform="translate(97 44)"><path d="M0 5 C-7 -2 -3 -9 0 -3 C3 -9 7 -2 0 5Z"/></g>
+    <g transform="translate(86 35)"><path d="M0 4 C-5.6 -1.6 -2.4 -7.2 0 -2.4 C2.4 -7.2 5.6 -1.6 0 4Z"/></g>
+    <g transform="translate(106 33)"><path d="M0 3.4 C-4.8 -1.4 -2 -6.2 0 -2 C2 -6.2 4.8 -1.4 0 3.4Z"/></g>
+  </g>
+  <g class="stars"><g class="orb">
+    <g transform="translate(60 2)"><path d="M0 -5 L1.6 -1.6 L5 0 L1.6 1.6 L0 5 L-1.6 1.6 L-5 0 L-1.6 -1.6Z"/></g>
+    <g transform="translate(76 27)"><path d="M0 -4 L1.3 -1.3 L4 0 L1.3 1.3 L0 4 L-1.3 1.3 L-4 0 L-1.3 -1.3Z"/></g>
+    <g transform="translate(44 27)"><path d="M0 -3.4 L1.1 -1.1 L3.4 0 L1.1 1.1 L0 3.4 L-1.1 1.1 L-3.4 0 L-1.1 -1.1Z"/></g>
+  </g></g>
+  <text class="bang" x="99" y="28">!</text>
+  <g class="drops">
+    <ellipse cx="104" cy="80" rx="3.4" ry="2.4"/>
+    <ellipse cx="104" cy="80" rx="2.6" ry="1.9"/>
+    <ellipse cx="104" cy="80" rx="2" ry="1.5"/>
+  </g>
+</svg>`;
+
+const STATE_COLOR = {working:'var(--good)', thinking:'var(--cold)', waiting:'var(--warn)',
+                     awaiting:'#a78bfa', dozing:'var(--faint)', stuck:'var(--dead)',
+                     quiet:'var(--faint)', broken:'var(--dead)', notranscript:'var(--faint)'};
+// 「在忙」= 球不在你手上的那些。等小弟回来也算忙，别去打扰它
+const BUSY = new Set(['working','thinking','awaiting']);
+const APP_NAME = {claude:'Claude Code', codex:'Codex', cursor:'Cursor'};
+
+function hue(s){ let h=0; for(const c of s||'x') h=(h*31+c.charCodeAt(0))>>>0; return (h%360)*137%360; }
+
+// 光靠哈希，四五只里总会撞出两只同色。所以每轮按 id 排序（顺序稳定，
+// 不会随活跃度乱跳），谁跟已分配的挨得太近就往后挪，直到岔开 40°。
+function spreadHues(sessions){
+  const out = new Map(), taken = [];
+  for(const c of [...sessions].sort((a,b)=>a.id<b.id?-1:1)){
+    let h = hue(c.cwd || c.id);
+    for(let i=0; i<9 && taken.some(t=>Math.min(Math.abs(t-h),360-Math.abs(t-h))<40); i++) h=(h+41)%360;
+    taken.push(h); out.set(c.id, h);
+  }
+  return out;
+}
+function esc(s){ return (s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function dur(sec){
+  if(sec==null) return '—';
+  if(sec<60) return Math.round(sec)+'秒';
+  if(sec<3600) return Math.floor(sec/60)+'分';
+  return Math.floor(sec/3600)+'时'+Math.floor(sec%3600/60)+'分';
+}
+function kilo(n){ return n>=1000 ? (n/1000).toFixed(n>=100000?0:1)+'k' : String(n||0); }
+// 转录里的时间戳是 UTC，后端已折算成 epoch 秒，这里按本机时区显示
+function hhmmss(sec){ return sec ? new Date(sec*1000).toLocaleTimeString('zh-CN',{hour12:false}) : ''; }
+function ago(sec, now){
+  if(!sec) return '';
+  const d = Math.max(0, now - sec);
+  if(d < 60) return '刚刚';
+  if(d < 3600) return Math.floor(d/60) + ' 分钟前';
+  if(d < 86400) return Math.floor(d/3600) + ' 小时前';
+  return Math.floor(d/86400) + ' 天前';
+}
+function shortModel(m){ return (m||'').replace(/^claude-/,'').replace(/-\d{8}$/,''); }
+
+function build(c){
+  const el = document.createElement('div');
+  el.className = 'pen';
+  el.innerHTML = `
+    <div class="pinbtns j-pinbtns">
+      <button class="pb j-open-folder" title="打开文件夹" tabindex="-1">📁</button>
+      <button class="pb j-open-url" title="浏览器打开" tabindex="-1">🌐</button>
+    </div>
+    <div class="top">
+      ${SVG}
+      <div class="who">
+        <div class="nm"><span class="dot"></span><span class="pinmark j-pinmark" style="display:none">📌</span><span class="j-name"></span>
+          <span class="tag app j-app"></span></div>
+        <div class="mini"><span class="e j-emoji"></span><span class="j-verb"></span>
+          <span class="t j-actt"></span></div>
+      </div>
+    </div>
+    <div class="ask j-askrow">
+      <svg class="qx" viewBox="0 0 32 28" aria-label="你说的话">
+        <path class="lance" d="M10.5 11 L28.5 1.8"/>
+        <circle class="q" cx="11.6" cy="6.4" r="2.5"/>
+        <path class="q" d="M9.5 9.2 q2.1 1.5 4.2 0 l1.1 4.4 q-3.2 1.1 -6.4 0 z"/>
+        <ellipse class="q" cx="13" cy="16.4" rx="7.4" ry="4"/>
+        <path class="q" d="M17.8 13.4 L22.6 7.6 L25.6 9.2 L21.2 15.6 Z"/>
+        <ellipse class="q" cx="25.2" cy="8.4" rx="3.2" ry="2.1" transform="rotate(-26 25.2 8.4)"/>
+        <path class="q" d="M23.4 6.1 L24.2 3.6 L25.6 5.6 Z"/>
+        <path class="leg" d="M8.8 19.4 v6.6 M12.4 19.9 v6.1 M15.6 19.9 v6.1 M18.8 19.2 v6.8"/>
+        <path class="tail" d="M5.7 14.3 q-3.3 1.7 -3.5 6.1"/>
+      </svg>
+      <span class="j-ask"></span>
+    </div>
+    <div class="detail"><div class="dwrap">
+      <div class="folder j-folder"></div>
+      <div class="tags">
+        <span class="tag cn j-code"></span>
+        <span class="tag j-model"></span>
+        <span class="tag j-idle"></span>
+        <span class="tag br j-branch"></span>
+        <span class="tag hp j-helpers"></span>
+      </div>
+      <div class="doing">
+        <div class="hint j-hint"></div>
+        <div class="say"><span class="stamp j-sayt"></span><span class="j-say"></span></div>
+      </div>
+      <div class="meters">
+        <div class="ctx">
+          <div class="lb"><span>上下文</span><span class="j-ctx"></span></div>
+          <div class="bar"><div class="fill j-fill"></div></div>
+        </div>
+        <div class="beats j-beats"></div>
+      </div>
+    </div></div>`;
+  el._beats = el.querySelector('.j-beats');
+  for(let i=0;i<12;i++) el._beats.appendChild(document.createElement('i'));
+  el.querySelector('.pet').addEventListener('click', e => { e.stopPropagation(); pat(el); });
+  return el;
+}
+
+// ---- 拍一拍 ----
+// 蹭蹭多来点，炸毛/打喷嚏少见些，撞见了才有惊喜（列表里出现几次就是几倍概率）
+const REACTIONS = ['r-happy','r-happy','r-happy','r-puff','r-puff',
+                   'r-dizzy','r-shy','r-shy','r-sneeze','r-grumpy'];
+const ALL_R = [...new Set(REACTIONS)];
+
+function pat(el){
+  let r, guard = 0;
+  // 别连着两次同一个反应——真随机会重复，但人看着像“坏了”
+  do { r = REACTIONS[Math.floor(Math.random()*REACTIONS.length)]; }
+  while(r === el._lastR && ++guard < 8);
+  el._lastR = r;
+
+  ALL_R.forEach(c => el.classList.remove(c));
+  void el.offsetWidth;              // 强制重排：同一个反应连点两下也能重新播
+  el.classList.add(r);
+  clearTimeout(el._rT);
+  el._rT = setTimeout(() => el.classList.remove(r), 1400);
+}
+
+function paint(el, c){
+  const q = s => el.querySelector(s);
+  el.dataset.s = c.state;
+  el.dataset.k = c.kind || 'claude';
+  const col = STATE_COLOR[c.state] || 'var(--faint)';
+  const dot = q('.dot');
+  dot.style.background = col;
+  dot.style.boxShadow = `0 0 9px ${col}, 0 0 3px ${col}`;   // 高科技辉光
+  q('.j-app').textContent = APP_NAME[c.kind] || c.kind || '?';
+  // 固定项目用你起的名字最好认，其次 session 自己的标题，最后才是 claude-54 这种代号
+  const disp = c.pinName || c.title || c.name;
+  q('.j-name').textContent = disp;
+  q('.j-name').title = (c.name && c.name !== disp) ? `${disp}（${c.name}）` : disp;
+  const code = q('.j-code');
+  code.textContent = (c.name && c.name !== disp) ? c.name : '';
+  code.style.display = code.textContent ? '' : 'none';
+
+  // 📁 每张卡都有（谁都有自己的目录）；🌐 只有配了网址的固定项目才有
+  const pinned = c.pin != null;
+  el.classList.toggle('pinned', pinned);
+  q('.j-pinmark').style.display = pinned ? '' : 'none';
+  const f = q('.j-open-folder'), u = q('.j-open-url');
+  q('.j-pinbtns').style.display = (c.canOpen || c.pinUrl) ? 'flex' : 'none';
+  f.style.display = c.canOpen ? '' : 'none';
+  f.title = '打开 ' + (c.cwd || '文件夹');
+  f.onclick = e => { e.stopPropagation(); openCard(c.id, 'folder', f); };
+  u.style.display = c.pinUrl ? '' : 'none';
+  u.title = '浏览器打开 ' + (c.pinUrl || '');
+  u.onclick = e => { e.stopPropagation(); openCard(c.id, 'url', u); };
+
+  // 你的上一句话：单独一行常驻，完整内容挂 title
+  const askRow = q('.j-askrow');
+  askRow.style.display = c.ask ? 'flex' : 'none';
+  q('.j-ask').textContent = c.ask || '';
+  askRow.title = c.ask || '';
+
+  q('.j-folder').textContent = c.cwd;
+  q('.j-folder').title = c.cwd;
+
+  const model = q('.j-model');
+  model.textContent = shortModel(c.model) || '—';
+  model.style.display = c.model ? '' : 'none';
+
+  const br = q('.j-branch');
+  const realBranch = c.branch && c.branch !== 'HEAD' ? c.branch : '';   // 非 git 目录会报 HEAD
+  br.textContent = realBranch;
+  br.style.display = realBranch ? '' : 'none';
+
+  const hp = q('.j-helpers');
+  hp.textContent = c.helpers ? `👥 ${c.helpers} 个小弟在跑` : '';
+  hp.style.display = c.helpers ? '' : 'none';
+
+  q('.j-emoji').textContent = c.emoji;
+  q('.j-verb').textContent = c.verb;
+
+  const hint = q('.j-hint');
+  hint.textContent = c.hint || '';
+  hint.style.display = c.hint ? '' : 'none';
+
+  q('.j-say').textContent = c.say || '';
+  const stamp = q('.j-sayt');
+  stamp.textContent = c.sayTs ? hhmmss(c.sayTs) : '';
+  stamp.style.display = c.sayTs ? '' : 'none';
+  q('.say').style.display = c.say ? '' : 'none';
+  q('.doing').style.display = (c.hint || c.say) ? '' : 'none';   // 都空就别留个空框
+
+  q('.j-fill').style.width = Math.min(100, c.ctxPct||0).toFixed(1) + '%';
+  q('.j-ctx').textContent = c.ctxLabel || '';
+
+  const peak = Math.max(1, ...(c.beats||[0]));
+  [...el._beats.children].forEach((b,i)=>{
+    b.style.height = (2 + (c.beats?.[i]||0)/peak*20) + 'px';
+    b.style.opacity = c.beats?.[i] ? .85 : .18;
+  });
+
+  // 这一分钟里它动过（最后一条消息换了）→ 闪一下再灭
+  if(el._c && c.lastTs && el._c.lastTs !== c.lastTs){
+    el.classList.add('fresh');
+    clearTimeout(el._flash);
+    el._flash = setTimeout(()=>el.classList.remove('fresh'), 1400);
+  }
+
+  el._c = c;                 // 留给 stampTimes 每秒重算相对时间
+  el._at = Date.now();       // 这份数据是什么时候拿到的
+  stampTimes(el);
+}
+
+// 数据一分钟才拉一次，但时间不能跟着冻住：本地每秒按「取数时刻 + 已过秒数」重算。
+function stampTimes(el){
+  const c = el._c; if(!c) return;
+  const elapsed = (Date.now() - el._at) / 1000;
+  const now = (Date.now() + serverOffset) / 1000;
+
+  el.querySelector('.j-idle').textContent =
+    (BUSY.has(c.state) ? '动了 ' : '静了 ')
+    + dur(c.idle == null ? null : c.idle + elapsed);
+
+  // 没有消息时间就留空，不用开窗时间或元数据更新时间凑数。
+  const actt = el.querySelector('.j-actt');
+  actt.innerHTML = c.lastTs ? `<b>${esc(hhmmss(c.lastTs))}</b> · ${esc(ago(c.lastTs, now))}` : '';
+  actt.title = c.lastTs ? '最后一条用户或 agent 消息的发送时间' : '';
+
+  const stamp = el.querySelector('.j-sayt');
+  stamp.title = c.sayTs ? `说这句话的时间 · ${ago(c.sayTs, now)}` : '';
+}
+
+let pollInFlight = false;
+async function tick(){
+  if(pollInFlight) return;
+  pollInFlight = true;
+  nextPollAt = Date.now() + POLL;
+  let data;
+  try{
+    data = await (await fetch('/api/sessions', {cache:'no-store'})).json();
+  }catch(e){
+    document.getElementById('tally').textContent = '后端断了 —— zoo_server.py 还在跑吗？';
+    return;
+  }finally{
+    pollInFlight = false;
+  }
+  serverOffset = data.now * 1000 - Date.now();   // 本机时钟跟后端对表
+  const seen = new Set(), hues = spreadHues(data.sessions);
+  for(const c of data.sessions){
+    seen.add(c.id);
+    let el = PETS.get(c.id);
+    if(!el){ el = build(c); PETS.set(c.id, el); zoo.appendChild(el); }
+    el.style.setProperty('--hue', hues.get(c.id));
+    paint(el, c);
+  }
+  for(const [id, el] of PETS){
+    if(!seen.has(id)){
+      PETS.delete(id);
+      el.classList.add('leaving');
+      setTimeout(()=>el.remove(), 320);
+    }
+  }
+  // 按活跃度重排，避免闪烁只在顺序真的变了时才动
+  const order = data.sessions.map(c=>PETS.get(c.id)).filter(Boolean);
+  if(order.some((el,i)=>zoo.children[i]!==el)) order.forEach(el=>zoo.appendChild(el));
+
+  if(!data.sessions.length){
+    if(!zoo.querySelector('.empty')){
+      const e=document.createElement('div'); e.className='empty';
+      e.innerHTML='<div class="big">🌙</div>一只都没有 —— 现在没有活着的 Claude/Codex session';
+      zoo.appendChild(e);
+    }
+  }else{ zoo.querySelector('.empty')?.remove(); }
+
+  // 深夜片场：钉在最底部，不是会话，日期没变就不重画（省得每 15 秒闪一下）
+  if(data.movie){
+    if(!posterEl) posterEl = buildPoster();
+    if(posterDay !== data.movie.day){ paintPoster(posterEl, data.movie); posterDay = data.movie.day; }
+    if(zoo.lastElementChild !== posterEl) zoo.appendChild(posterEl);   // 已经在最后就别多此一举
+  }
+
+  const all = data.sessions.length;
+  const busy = data.sessions.filter(c=>BUSY.has(c.state)).length;
+  // 括号里的"忙"是这 all 只里的子集（不是相加）；"隐藏"是另一批没显示的
+  tally.textContent = `${all} 只` + (busy ? `（${busy} 忙）` : '')
+    + (data.hidden ? ` · ${data.hidden} 隐藏` : '');
+  // 野生的（开了窗口一句没说）只在悬停说明里交代一声，不占标题栏那行
+  tally.title = `在场 ${all} 只，其中 ${busy} 个在忙`
+    + (data.hidden ? `；另有 ${data.hidden} 个超 24 小时没消息，已隐藏` : '')
+    + (data.wild ? `；另有 ${data.wild} 个开着但一句话没说，算野生的，不显示` : '');
+
+  document.getElementById('keeper').textContent = keeperLine(data, all, busy);
+}
+
+let posterEl = null, posterDay = null;
+function buildPoster(){
+  const el = document.createElement('div');
+  el.className = 'poster';
+  el.innerHTML = `
+    <div class="reel-row"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    <div class="p-top"><span class="p-clap">🎬</span>
+      <div><div class="p-title j-ptitle"></div><div class="p-en j-pen"></div></div>
+      <span class="p-year j-pyear"></span>
+    </div>
+    <div class="p-lower">
+      <div class="p-textcol">
+        <div class="p-quote j-pquote"></div>
+        <div class="p-meta"><span>饲养员私藏片单</span><span class="j-pno"></span></div>
+      </div>
+      <svg class="p-pal" viewBox="-4 -4 76 84" xmlns="http://www.w3.org/2000/svg">
+        <ellipse class="pp-shadow" cx="34" cy="74" rx="17" ry="3.4"/>
+        <g class="pp-rig">
+          <path class="pp-body" d="M34 14 C52 14 60 28 60 44 C60 60 48 70 34 70 C20 70 8 60 8 44 C8 28 16 14 34 14Z"/>
+          <path class="pp-bow" d="M26 22 L34 26 L42 22 L42 18 L34 22 L26 18 Z"/>
+          <g class="pp-arm"><rect x="0" y="42" width="12" height="7" rx="3.5"/></g>
+          <g class="pp-arm"><rect x="56" y="42" width="12" height="7" rx="3.5"/></g>
+          <circle class="pp-cheek" cx="19" cy="46" r="3.2"/>
+          <circle class="pp-cheek" cx="49" cy="46" r="3.2"/>
+          <circle class="pp-eye l" cx="26" cy="38" r="3"/>
+          <circle class="pp-eye r" cx="42" cy="38" r="3"/>
+          <path class="pp-mouth" d="M26 51 Q34 56 42 51"/>
+        </g>
+        <text class="pp-corn" x="45" y="66">🍿</text>
+      </svg>
+    </div>`;
+  // 只在创建这一刻放一次入场动画（Web Animations API，跟 CSS class 无关），
+  // 以后不管因为排序被挪到第几个位置，都不会被浏览器当成"新出场"又重放。
+  el.animate(
+    [{opacity:0, transform:'translateY(14px) scale(.96)'}, {opacity:1, transform:'none'}],
+    {duration:450, easing:'cubic-bezier(.34,1.56,.64,1)', fill:'forwards'}
+  );
+  return el;
+}
+function paintPoster(el, m){
+  el.style.setProperty('--he', m.hue);
+  el.querySelector('.j-ptitle').textContent = m.title;
+  el.querySelector('.j-pen').textContent = m.en;
+  el.querySelector('.j-pyear').textContent = m.year;
+  el.querySelector('.j-pquote').textContent = '“' + m.quote + '”';
+  el.querySelector('.j-pno').textContent = `第 ${m.no}/${m.count} 部 · 今日放映`;
+}
+
+// 饲养员播报：跟着整体状态换一句话，不铺开细节，图个热闹
+function keeperLine(data, all, busy){
+  if(data.sessions.some(c=>c.state==='stuck'))
+    return '🔦 饲养员皱眉巡场：有几只好像卡住了，去瞅一眼？';
+  if(!all)
+    return '🌙 饲养员打了个哈欠，兽舍里静悄悄的。';
+  if(busy === all)
+    return `🧹 饲养员两脚不沾地：${all} 只全在开工。`;
+  if(busy)
+    return `🧑‍🌾 饲养员正在巡视，${busy} 只忙着，其余的在打盹。`;
+  return '😴 饲养员靠在门边打盹，兽舍安安静静。';
+}
+
+// 每秒只干本地的活：重算相对时间。不碰网络。
+setInterval(()=>{ for(const el of PETS.values()) stampTimes(el); }, 1000);
+
+let timer = null;
+function schedule(){ clearInterval(timer); timer = setInterval(tick, POLL); }
+// 切回前台时补一次，免得盯着旧数据
+document.addEventListener('visibilitychange', ()=>{
+  if(!document.hidden && Date.now() - (nextPollAt - POLL) > POLL/2){ tick(); schedule(); }
+});
+tick(); schedule();
+
+// ---- 卡片上的快捷按钮：让后端在本机打开文件夹 / 浏览器 ----
+// 传的是卡片 id 不是路径——开什么由后端那张表说了算，这个本地端点开不了别的东西
+function openCard(id, what, btn){
+  if(btn) btn.animate([{transform:'scale(1)'},{transform:'scale(1.22)'},{transform:'scale(1)'}],
+                      {duration:220,easing:'ease-out'});
+  fetch('/api/open?id=' + encodeURIComponent(id) + '&what=' + what, {cache:'no-store'}).catch(()=>{});
+}
+
+// ---- 折叠 / 关闭：本地立刻切样式，同时通知外壳去改窗口大小 ----
+function ui(set){ fetch('/api/ui?set=' + set, {cache:'no-store'}).catch(()=>{}); }
+const fold = document.getElementById('fold');
+fold.onclick = ()=>{
+  const mini = document.body.classList.toggle('mini');
+  fold.textContent = mini ? '❐' : '▁';
+  fold.title = mini ? '展开' : '折叠';
+  ui('min');                         // 后端会在 min/max 间来回切
+};
+document.getElementById('close').onclick = ()=> ui('close');
+
+// ---- 顶栏的会话管理入口：让后端把隔壁那个小工具叫起来（没跑就地拉起），
+// 再用默认浏览器打开。这个窗口本身不动。
+document.getElementById('sessions').onclick = ()=>{
+  fetch('/api/launch-sessions', {cache:'no-store'}).catch(()=>{});
+};
+
+// ---- 放风模式：外壳（zoo_play.py）调的四个口子 ----
+// 分工：坐标全由 Python 算，这边只负责画。因为窗口区域裁剪和画面必须逐帧
+// 对齐，差几个像素泡泡就被切掉一块；同一组数字一份切区域一份画，才不会错位。
+// 所以这里【不加任何 transition/animation 到 .bub 的 transform 上】。
+let field = null, bubs = [];
+
+window.ZOO = {
+  // 页面和外壳的接口版本。外壳升级了但窗口还开着（页面是旧的）时，外壳会看这个
+  // 数字决定要不要放风——不看的话，旧页面画不出泡泡，而区域照切，屏幕上就是一堆
+  // 会跑的黑圆。改了下面任何一个函数的签名，这里就 +1。
+  v: 3,
+
+  // 出栏名单。带上每只现在在屏幕上的位置，让它们从自己卡片那儿走出来，
+  // 而不是凭空出现在随机角落。
+  roster(){
+    const out = [];
+    for(const [id, el] of PETS){
+      if(el.classList.contains('leaving')) continue;
+      const p = el.querySelector('.pet');
+      const r = p ? p.getBoundingClientRect() : el.getBoundingClientRect();
+      out.push({id, state: el.dataset.s || 'waiting',
+                kind: el.dataset.k || 'claude',
+                hue: el.style.getPropertyValue('--hue') || '210',
+                x: r.left + r.width/2, y: r.top + r.height/2});
+    }
+    return out;
+  },
+
+  // disc = 画出来的圆直径（比区域大一圈，多的会被裁掉）；petPx = 里面那只画多大
+  playOn(list, disc, petPx){
+    ZOO.playOff();
+    document.body.classList.add('playtime');
+    field = document.createElement('div');
+    field.id = 'field';
+    field.style.setProperty('--disc', disc + 'px');
+    field.style.setProperty('--petw', petPx + 'px');
+    bubs = list.map(it => {
+      const b = document.createElement('div');
+      b.className = 'bub pop';
+      b.dataset.id = it.id;              // playSync 靠这个复用元素
+      b.dataset.s = it.state;
+      b.dataset.k = it.kind || 'claude';
+      b.style.setProperty('--hue', it.hue);
+      b.innerHTML = SVG;
+      field.appendChild(b);
+      return b;
+    });
+    document.body.appendChild(field);
+    setTimeout(()=>bubs.forEach(b=>b.classList.remove('pop')), 500);
+  },
+
+  // 对名单。放风可能持续几小时，状态会变、也可能开出新 session。
+  // 活着的按 id 复用同一个元素——重建的话所有泡泡都会重新弹一下，很吵。
+  // 顺序必须跟外壳给的一致：playAt 是按下标对位的。
+  playSync(list){
+    if(!field) return;
+    const by = new Map(bubs.map(b => [b.dataset.id, b]));
+    bubs = list.map(it => {
+      let b = by.get(it.id);
+      if(b){ by.delete(it.id); }
+      else {
+        b = document.createElement('div');
+        b.className = 'bub pop';
+        b.dataset.id = it.id;
+        b.innerHTML = SVG;
+        field.appendChild(b);
+        setTimeout(()=>b.classList.remove('pop'), 500);
+      }
+      b.dataset.s = it.state;
+      b.dataset.k = it.kind || 'claude';
+      b.style.setProperty('--hue', it.hue);
+      return b;
+    });
+    for(const gone of by.values()) gone.remove();   // 这只已经没了
+  },
+
+  // flat = [x, y, 歪头角度, x, y, 角度, ...]，顺序跟 playOn 的名单一致
+  playAt(flat){
+    const r = field ? parseFloat(field.style.getPropertyValue('--disc'))/2 : 0;
+    for(let i=0;i<bubs.length;i++){
+      const x = flat[i*3], y = flat[i*3+1], rot = flat[i*3+2];
+      if(x === undefined) break;
+      bubs[i].style.transform =
+        `translate(${(x-r).toFixed(1)}px,${(y-r).toFixed(1)}px) rotate(${rot}deg)`;
+    }
+  },
+
+  playHome(){ document.body.classList.add('homing'); },
+
+  playOff(){
+    document.body.classList.remove('playtime','homing');
+    if(field) field.remove();
+    field = null; bubs = [];
+  }
+};
+</script>
+</body>
+</html>
